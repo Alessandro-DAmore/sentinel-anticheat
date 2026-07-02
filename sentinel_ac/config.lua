@@ -45,8 +45,10 @@ Config.DesktopSession = {
   enabled = true,
   enforce = true,
   checkIntervalMs = 5000,
+  startupGraceMs = 45000,
   requireDiscordIdentifier = true,
   kickMessage = "Hai chiuso l'app del Sentinel Anticheat, ti ricordiamo che devi tenerla aperta per poter giocare.",
+  notActiveMessage = 'Sentinel AC: sessione non attiva. Apri Sentinel Anticheat, collega Discord e premi Connetti prima di entrare.',
   suspiciousKickMessage = 'Sentinel AC: file sospetto rilevato. Passa in "Attesa Anticheat" sul Discord del server.',
   missingDiscordMessage = 'Sentinel AC: devi collegare Discord prima di entrare nel server.'
 }

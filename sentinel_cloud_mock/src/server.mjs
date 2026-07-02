@@ -40,7 +40,7 @@ const discordClientSecret = process.env.DISCORD_CLIENT_SECRET || '';
 const discordRedirectUri = process.env.DISCORD_REDIRECT_URI || `${publicBaseUrl}/auth/discord/callback`;
 const discordOAuthConfigured = Boolean(discordClientId && discordClientSecret);
 const maxBodyBytes = Number(process.env.SENTINEL_MAX_BODY_BYTES || 10_000_000);
-const sessionTtlMs = Number(process.env.SENTINEL_SESSION_TTL_MS || 15_000);
+const sessionTtlMs = Number(process.env.SENTINEL_SESSION_TTL_MS || 60_000);
 const blockedSessionTtlMs = Number(process.env.SENTINEL_BLOCKED_SESSION_TTL_MS || 300_000);
 const storageProvider = String(process.env.SENTINEL_STORAGE_PROVIDER || 'local').toLowerCase();
 const r2Bucket = process.env.SENTINEL_R2_BUCKET || '';
@@ -207,6 +207,25 @@ function blockedSessionForDiscord(discordId) {
     }
   }
   return null;
+}
+
+function recentSessionForDiscord(discordId, status, ttlMs = blockedSessionTtlMs) {
+  const normalized = normalizeDiscordId(discordId);
+  const now = Date.now();
+  let newest = null;
+
+  for (const session of agentSessions.values()) {
+    if (
+      session.discordId === normalized &&
+      session.status === status &&
+      now - session.lastSeenAt <= ttlMs &&
+      (!newest || session.lastSeenAt > newest.lastSeenAt)
+    ) {
+      newest = session;
+    }
+  }
+
+  return newest;
 }
 
 function markSessionBlocked(payload, reason = 'suspicious_scan_blocked') {
@@ -2705,6 +2724,17 @@ export const server = http.createServer(async (req, res) => {
         discordId,
         sessionId: blockedSession.sessionId,
         reason: blockedSession.blockReason || 'suspicious_scan_blocked'
+      });
+      return;
+    }
+
+    const closingSession = recentSessionForDiscord(discordId, 'closing');
+    if (closingSession) {
+      writeJson(res, 200, {
+        active: false,
+        discordId,
+        sessionId: closingSession.sessionId,
+        reason: 'desktop_anticheat_closed'
       });
       return;
     }

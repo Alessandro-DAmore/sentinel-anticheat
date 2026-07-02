@@ -2,6 +2,7 @@ Sentinel = Sentinel or {}
 Sentinel.DesktopSession = Sentinel.DesktopSession or {}
 
 local lastCheck = {}
+local joinedAt = {}
 local statusBySource = {}
 local statusFile = 'data/desktop_session_status.json'
 
@@ -32,6 +33,32 @@ local function discordIdFor(source)
   return nil
 end
 
+local function desktopSessionMessage(reason)
+  if reason == 'desktop_anticheat_not_active' or reason == 'session_not_found' or reason == 'desktop_anticheat_heartbeat_expired' then
+    return Config.DesktopSession.notActiveMessage or Config.DesktopSession.kickMessage
+  end
+
+  if reason == 'suspicious_scan_blocked' or reason == 'suspicious_scan_ban' or reason == 'runtime_suspicious_process' then
+    return Config.DesktopSession.suspiciousKickMessage or Config.DesktopSession.kickMessage
+  end
+
+  return Config.DesktopSession.kickMessage
+end
+
+local function canGraceInactive(source, reason)
+  if reason ~= 'desktop_anticheat_not_active' and reason ~= 'session_not_found' and reason ~= 'desktop_anticheat_heartbeat_expired' then
+    return false
+  end
+
+  local startedAt = joinedAt[source]
+  if not startedAt then
+    return false
+  end
+
+  local graceMs = tonumber(Config.DesktopSession.startupGraceMs or 0) or 0
+  return graceMs > 0 and Sentinel.nowMs() - startedAt <= graceMs
+end
+
 local function kickForDesktopSession(source, reason)
   statusBySource[source] = {
     ok = false,
@@ -45,12 +72,7 @@ local function kickForDesktopSession(source, reason)
     return
   end
 
-  local message = Config.DesktopSession.kickMessage
-  if reason == 'suspicious_scan_blocked' or reason == 'suspicious_scan_ban' then
-    message = Config.DesktopSession.suspiciousKickMessage or message
-  end
-
-  DropPlayer(source, message)
+  DropPlayer(source, desktopSessionMessage(reason))
 end
 
 function Sentinel.DesktopSession.check(source)
@@ -116,10 +138,26 @@ function Sentinel.DesktopSession.check(source)
     end
 
     if not response or response.active ~= true then
-      kickForDesktopSession(source, response and response.reason or 'desktop_anticheat_not_active')
+      local reason = response and response.reason or 'desktop_anticheat_not_active'
+      if canGraceInactive(source, reason) then
+        statusBySource[source] = {
+          ok = false,
+          pending = true,
+          discordId = discordId,
+          reason = reason,
+          graceUntilMs = (joinedAt[source] or Sentinel.nowMs()) + (tonumber(Config.DesktopSession.startupGraceMs or 0) or 0),
+          checkedAt = os.time()
+        }
+        writeStatus()
+        print(('[Sentinel AC] desktop session pending for %s reason=%s'):format(source, tostring(reason)))
+        return
+      end
+
+      kickForDesktopSession(source, reason)
       return
     end
 
+    joinedAt[source] = nil
     statusBySource[source] = {
       ok = true,
       discordId = discordId,
@@ -132,12 +170,14 @@ end
 
 AddEventHandler('playerDropped', function()
   lastCheck[source] = nil
+  joinedAt[source] = nil
   statusBySource[source] = nil
   writeStatus()
 end)
 
 AddEventHandler('playerConnecting', function()
   local player = source
+  joinedAt[player] = joinedAt[player] or Sentinel.nowMs()
   SetTimeout(8000, function()
     if GetPlayerName(player) then
       Sentinel.DesktopSession.check(player)
@@ -154,6 +194,7 @@ end)
 
 AddEventHandler('playerJoining', function()
   local player = source
+  joinedAt[player] = joinedAt[player] or Sentinel.nowMs()
   SetTimeout(5000, function()
     if GetPlayerName(player) then
       Sentinel.DesktopSession.check(player)

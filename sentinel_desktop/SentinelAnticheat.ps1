@@ -226,6 +226,33 @@ function Invoke-SentinelJson {
   throw $lastError
 }
 
+function Send-SentinelSessionHeartbeat {
+  param(
+    [Parameter(Mandatory = $true)]$Config,
+    [Parameter(Mandatory = $true)][string]$SessionId,
+    [string]$DiscordId = '',
+    [string]$Status = 'active',
+    [scriptblock]$Log = $null
+  )
+
+  if ([string]::IsNullOrWhiteSpace($SessionId)) {
+    return
+  }
+
+  try {
+    Invoke-SentinelJson -Uri (($Config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/heartbeat') -AgentKey $Config.agentKey -Body @{
+      licenseKey = $Config.licenseKey
+      sessionId = $SessionId
+      discordId = $DiscordId
+      status = $Status
+    } | Out-Null
+  } catch {
+    if ($null -ne $Log) {
+      & $Log ('Heartbeat sessione non riuscito: {0}' -f $_.Exception.Message)
+    }
+  }
+}
+
 function New-EncryptedEnvelope {
   param(
     [Parameter(Mandatory = $true)]$Payload,
@@ -557,6 +584,9 @@ function Start-SentinelScan {
     throw $message
   }
 
+  $lastWorkerHeartbeat = Get-Date
+  Send-SentinelSessionHeartbeat -Config $Config -SessionId ([string]$session.sessionId) -DiscordId $DiscordId -Status 'scanning' -Log $Log
+
   $findings = [System.Collections.Generic.List[object]]::new()
   $stats = [ordered]@{
     processes = 0
@@ -633,6 +663,11 @@ function Start-SentinelScan {
           $elapsed = [Math]::Max(1, [int]((Get-Date) - $scanStarted).TotalSeconds)
           $percent = [Math]::Min(86, 48 + [int](([Math]::Min($elapsed, $maxScanSeconds) / [Math]::Max($maxScanSeconds, 1)) * 38))
           & $Log ('[progress:{0}] Scansione file... {1} file controllati, {2} hash calcolati' -f $percent, $stats.filesVisited, $stats.filesHashed)
+
+          if (((Get-Date) - $lastWorkerHeartbeat).TotalSeconds -ge 10) {
+            Send-SentinelSessionHeartbeat -Config $Config -SessionId ([string]$session.sessionId) -DiscordId $DiscordId -Status 'scanning' -Log $Log
+            $lastWorkerHeartbeat = Get-Date
+          }
         }
 
         if ([int]((Get-Date) - $scanStarted).TotalSeconds -ge $maxScanSeconds) {
@@ -719,6 +754,7 @@ function Start-SentinelScan {
   $reportPath = Join-Path $Script:ReportsPath ('{0}.json' -f $report.reportId)
   $report | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $reportPath -Encoding UTF8
   & $Log ('[progress:90] Report locale scritto: {0}' -f $reportPath)
+  Send-SentinelSessionHeartbeat -Config $Config -SessionId ([string]$session.sessionId) -DiscordId $DiscordId -Status 'active' -Log $Log
 
   if (($Config.reportOnlyWhenSuspicious -eq $true) -and ($findings.Count -eq 0)) {
     & $Log '[progress:100] Nessun sospetto trovato: upload report saltato per configurazione.'
@@ -1278,12 +1314,10 @@ function Send-AgentHeartbeat {
   }
 
   try {
-    Invoke-SentinelJson -Uri (($config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/heartbeat') -AgentKey $config.agentKey -Body @{
-      licenseKey = $config.licenseKey
-      sessionId = $Script:SessionId
-      discordId = $Script:DiscordId
-      status = $Status
-    } | Out-Null
+    Send-SentinelSessionHeartbeat -Config $config -SessionId $Script:SessionId -DiscordId $Script:DiscordId -Status $Status -Log {
+      param($message)
+      Write-UiLog $message
+    }
   } catch {
     Write-UiLog ('Heartbeat non riuscito: {0}' -f $_.Exception.Message)
   }
