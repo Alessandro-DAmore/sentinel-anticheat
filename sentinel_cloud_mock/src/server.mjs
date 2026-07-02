@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import PDFDocument from 'pdfkit';
 import {
   createDecipheriv,
@@ -34,6 +35,30 @@ const discordOAuthConfigured = Boolean(discordClientId && discordClientSecret);
 const maxBodyBytes = Number(process.env.SENTINEL_MAX_BODY_BYTES || 10_000_000);
 const sessionTtlMs = Number(process.env.SENTINEL_SESSION_TTL_MS || 15_000);
 const blockedSessionTtlMs = Number(process.env.SENTINEL_BLOCKED_SESSION_TTL_MS || 300_000);
+const storageProvider = String(process.env.SENTINEL_STORAGE_PROVIDER || 'local').toLowerCase();
+const r2Bucket = process.env.SENTINEL_R2_BUCKET || '';
+const r2AccountId = process.env.SENTINEL_R2_ACCOUNT_ID || '';
+const r2AccessKeyId = process.env.SENTINEL_R2_ACCESS_KEY_ID || '';
+const r2SecretAccessKey = process.env.SENTINEL_R2_SECRET_ACCESS_KEY || '';
+const r2PublicBaseUrl = (process.env.SENTINEL_R2_PUBLIC_BASE_URL || '').replace(/\/$/, '');
+const storagePrefix = String(process.env.SENTINEL_STORAGE_PREFIX || 'downloads')
+  .replace(/^\/+|\/+$/g, '')
+  .replace(/\\/g, '/');
+const cloudStorageEnabled = storageProvider === 'r2'
+  && r2Bucket
+  && r2AccountId
+  && r2AccessKeyId
+  && r2SecretAccessKey;
+const r2Client = cloudStorageEnabled
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: r2AccessKeyId,
+        secretAccessKey: r2SecretAccessKey
+      }
+    })
+  : null;
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(downloadsDir, { recursive: true });
@@ -301,9 +326,12 @@ function downloadBuilds() {
     const filePath = path.join(downloadsDir, build.filename);
     const exists = fs.existsSync(filePath);
     const stat = exists ? fs.statSync(filePath) : null;
+    const publicUrl = cloudPublicUrl(build.filename);
     return {
       ...build,
-      available: exists,
+      available: cloudStorageEnabled || exists,
+      storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
+      publicUrl,
       sizeBytes: stat?.size || 0,
       updatedAt: stat?.mtime.toISOString() || null
     };
@@ -315,6 +343,16 @@ function formatBytes(bytes) {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${value} B`;
+}
+
+function downloadObjectKey(filename) {
+  const safeName = path.basename(filename);
+  return storagePrefix ? `${storagePrefix}/${safeName}` : safeName;
+}
+
+function cloudPublicUrl(filename) {
+  if (!r2PublicBaseUrl) return '';
+  return `${r2PublicBaseUrl}/${downloadObjectKey(filename).split('/').map(encodeURIComponent).join('/')}`;
 }
 
 function escapeHtml(value) {
@@ -536,7 +574,7 @@ function downloadHtml() {
           <span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'Disponibile' : 'Da caricare'}</span>
         </div>
         <p class="muted" style="margin-top:14px">${build.available
-          ? `File: ${escapeHtml(build.downloadName)} - ${formatBytes(build.sizeBytes)}`
+          ? `File: ${escapeHtml(build.downloadName)}${build.sizeBytes ? ` - ${formatBytes(build.sizeBytes)}` : ''} - Storage: ${escapeHtml(build.storage)}`
           : 'La build non e ancora presente sul server online.'}</p>
         <div class="actions">
           ${build.available
@@ -631,7 +669,7 @@ function adminPanelHtml(token) {
     <tr>
       <td>${escapeHtml(build.label)}</td>
       <td><span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'online' : 'mancante'}</span></td>
-      <td>${build.available ? escapeHtml(formatBytes(build.sizeBytes)) : '-'}</td>
+      <td>${escapeHtml(build.storage)}${build.sizeBytes ? ` - ${escapeHtml(formatBytes(build.sizeBytes))}` : ''}</td>
       <td>${build.updatedAt ? escapeHtml(build.updatedAt) : '-'}</td>
       <td><input type="file" accept=".exe" data-build-file="${escapeHtml(build.platform)}"></td>
       <td><button class="button" data-build-upload="${escapeHtml(build.platform)}">Carica</button></td>
@@ -1297,7 +1335,7 @@ function buildReportPdf(report) {
   });
 }
 
-function saveDownloadBuild(payload) {
+async function saveDownloadBuild(payload) {
   const platform = String(payload.platform || '').toLowerCase();
   const build = downloadBuilds().find(item => item.platform === platform);
   if (!build) {
@@ -1325,25 +1363,82 @@ function saveDownloadBuild(payload) {
     return { ok: false, status: 413, error: 'file_too_large' };
   }
 
-  fs.mkdirSync(downloadsDir, { recursive: true });
-  const targetPath = path.join(downloadsDir, build.filename);
-  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tempPath, buffer);
-  fs.renameSync(tempPath, targetPath);
+  if (cloudStorageEnabled) {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: downloadObjectKey(build.filename),
+      Body: buffer,
+      ContentType: 'application/vnd.microsoft.portable-executable',
+      ContentDisposition: `attachment; filename="${build.downloadName}"; filename*=UTF-8''${encodeURIComponent(build.downloadName)}`,
+      CacheControl: 'no-store',
+      Metadata: {
+        platform: build.platform,
+        originalName: originalName || build.downloadName,
+        uploadedBy: 'sentinel-admin'
+      }
+    }));
+  } else {
+    fs.mkdirSync(downloadsDir, { recursive: true });
+    const targetPath = path.join(downloadsDir, build.filename);
+    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, buffer);
+    fs.renameSync(tempPath, targetPath);
+  }
 
   return {
     ok: true,
     platform: build.platform,
     filename: build.filename,
     downloadName: build.downloadName,
+    storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
+    publicUrl: cloudPublicUrl(build.filename) || null,
     sizeBytes: buffer.length,
     updatedAt: new Date().toISOString()
   };
 }
 
-function streamDownload(res, filename, downloadName = filename) {
+async function streamDownload(res, filename, downloadName = filename) {
   const safeName = path.basename(filename);
   const safeDownloadName = path.basename(downloadName);
+  if (cloudStorageEnabled) {
+    const publicUrl = cloudPublicUrl(safeName);
+    if (publicUrl) {
+      res.writeHead(302, {
+        location: publicUrl,
+        'cache-control': 'no-store'
+      });
+      res.end();
+      return;
+    }
+
+    try {
+      const object = await r2Client.send(new GetObjectCommand({
+        Bucket: r2Bucket,
+        Key: downloadObjectKey(safeName)
+      }));
+      res.writeHead(200, {
+        'content-type': object.ContentType || 'application/vnd.microsoft.portable-executable',
+        'content-disposition': object.ContentDisposition || `attachment; filename="${safeDownloadName}"; filename*=UTF-8''${encodeURIComponent(safeDownloadName)}`,
+        'cache-control': 'no-store',
+        ...(object.ContentLength ? { 'content-length': String(object.ContentLength) } : {})
+      });
+
+      if (object.Body && typeof object.Body.pipe === 'function') {
+        object.Body.pipe(res);
+        return;
+      }
+      if (object.Body && typeof object.Body.transformToByteArray === 'function') {
+        res.end(Buffer.from(await object.Body.transformToByteArray()));
+        return;
+      }
+      res.end();
+      return;
+    } catch (error) {
+      writeText(res, 404, `Download non trovato nello storage cloud: ${error.message}`);
+      return;
+    }
+  }
+
   const filePath = path.join(downloadsDir, safeName);
   if (!fs.existsSync(filePath)) {
     writeText(res, 404, 'Download non ancora generato. Rigenera il pacchetto desktop.');
@@ -1411,12 +1506,12 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/download/windows-x64') {
-    streamDownload(res, 'SentinelAnticheat-Windows-x64.exe', 'Sentinel Anticheat.exe');
+    await streamDownload(res, 'SentinelAnticheat-Windows-x64.exe', 'Sentinel Anticheat.exe');
     return;
   }
 
   if (req.method === 'GET' && url.pathname === '/download/windows-x86') {
-    streamDownload(res, 'SentinelAnticheat-Windows-x86.exe', 'Sentinel Anticheat 32 bit.exe');
+    await streamDownload(res, 'SentinelAnticheat-Windows-x86.exe', 'Sentinel Anticheat 32 bit.exe');
     return;
   }
 
@@ -1628,7 +1723,7 @@ export const server = http.createServer(async (req, res) => {
       writeJson(res, 401, { error: 'unauthorized' });
       return;
     }
-    const result = saveDownloadBuild(payload);
+    const result = await saveDownloadBuild(payload);
     if (!result.ok) {
       writeJson(res, result.status || 400, { error: result.error || 'upload_failed' });
       return;
