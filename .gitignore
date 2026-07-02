@@ -8,6 +8,7 @@
 sentinel_desktop/logs/
 sentinel_desktop/reports/
 sentinel_desktop/build/
+sentinel_cloud_mock/data/download-manifest.json
 sentinel_cloud_mock/downloads/*.zip
 sentinel_cloud_mock/downloads/*.exe
 

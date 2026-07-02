@@ -18,6 +18,7 @@ const downloadsDir = path.join(packageRoot, 'downloads');
 const assetsDir = path.join(packageRoot, 'assets');
 const dataDir = path.join(packageRoot, 'data');
 const signaturesPath = path.join(dataDir, 'signatures.json');
+const downloadManifestPath = path.join(dataDir, 'download-manifest.json');
 
 const host = process.env.SENTINEL_HOST || '127.0.0.1';
 const port = Number(process.env.PORT || process.env.SENTINEL_PORT || 8787);
@@ -94,6 +95,10 @@ function sha256(input) {
 
 function hmacHex(input) {
   return createHmac('sha256', sha256(sharedSecret)).update(String(input)).digest('hex');
+}
+
+function sha256Hex(input) {
+  return createHash('sha256').update(input).digest('hex');
 }
 
 function readSignatureFeed() {
@@ -304,8 +309,8 @@ function writeText(res, status, text) {
   res.end(text);
 }
 
-function downloadBuilds() {
-  const builds = [
+function baseDownloadBuilds() {
+  return [
     {
       platform: 'x64',
       label: 'Windows 64 bit',
@@ -321,21 +326,104 @@ function downloadBuilds() {
       downloadName: 'Sentinel Anticheat 32 bit.exe'
     }
   ];
+}
 
-  return builds.map(build => {
+function localDownloadBuilds(manifest = {}) {
+  return baseDownloadBuilds().map(build => {
+    const manifestBuild = manifest.builds?.[build.platform] || {};
     const filePath = path.join(downloadsDir, build.filename);
     const exists = fs.existsSync(filePath);
     const stat = exists ? fs.statSync(filePath) : null;
     const publicUrl = cloudPublicUrl(build.filename);
     return {
       ...build,
-      available: cloudStorageEnabled || exists,
+      available: Boolean(manifestBuild.uploadedAt || exists),
       storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
       publicUrl,
-      sizeBytes: stat?.size || 0,
-      updatedAt: stat?.mtime.toISOString() || null
+      sha256: manifestBuild.sha256 || null,
+      sizeBytes: manifestBuild.sizeBytes || stat?.size || 0,
+      updatedAt: manifestBuild.uploadedAt || stat?.mtime.toISOString() || null
     };
   });
+}
+
+async function objectBodyToBuffer(body) {
+  if (!body) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (typeof body.transformToByteArray === 'function') {
+    return Buffer.from(await body.transformToByteArray());
+  }
+  if (typeof body.pipe === 'function') {
+    return await new Promise((resolve, reject) => {
+      const chunks = [];
+      body.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      body.on('error', reject);
+      body.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+  }
+  return Buffer.from(String(body));
+}
+
+function emptyDownloadManifest() {
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
+    builds: {}
+  };
+}
+
+function readLocalDownloadManifest() {
+  try {
+    return fs.existsSync(downloadManifestPath)
+      ? JSON.parse(fs.readFileSync(downloadManifestPath, 'utf8'))
+      : emptyDownloadManifest();
+  } catch {
+    return emptyDownloadManifest();
+  }
+}
+
+async function readDownloadManifest() {
+  if (cloudStorageEnabled) {
+    try {
+      const object = await r2Client.send(new GetObjectCommand({
+        Bucket: r2Bucket,
+        Key: downloadObjectKey('manifest.json')
+      }));
+      return JSON.parse((await objectBodyToBuffer(object.Body)).toString('utf8'));
+    } catch {
+      return readLocalDownloadManifest();
+    }
+  }
+  return readLocalDownloadManifest();
+}
+
+async function writeDownloadManifest(manifest) {
+  const nextManifest = {
+    ...manifest,
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local'
+  };
+  const raw = JSON.stringify(nextManifest, null, 2);
+  fs.writeFileSync(downloadManifestPath, `${raw}\n`, 'utf8');
+
+  if (cloudStorageEnabled) {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: downloadObjectKey('manifest.json'),
+      Body: raw,
+      ContentType: 'application/json; charset=utf-8',
+      CacheControl: 'no-store'
+    }));
+  }
+
+  return nextManifest;
+}
+
+async function downloadBuilds() {
+  return localDownloadBuilds(await readDownloadManifest());
 }
 
 function formatBytes(bytes) {
@@ -490,6 +578,7 @@ function layoutPage({ title, active = '', body }) {
       <div class="links">
         <a href="/" ${active === 'home' ? 'class="button primary"' : ''}>Home</a>
         <a href="/download" ${active === 'download' ? 'class="button primary"' : ''}>Download</a>
+        <a href="/verify" ${active === 'verify' ? 'class="button primary"' : ''}>Verifica</a>
         <a href="/admin" ${active === 'admin' ? 'class="button primary"' : ''}>Admin</a>
       </div>
     </nav>
@@ -560,8 +649,8 @@ function homeHtml() {
   });
 }
 
-function downloadHtml() {
-  const builds = downloadBuilds();
+async function downloadHtml() {
+  const builds = await downloadBuilds();
   const buildCards = builds.map(build => `
       <article class="panel">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start">
@@ -576,10 +665,12 @@ function downloadHtml() {
         <p class="muted" style="margin-top:14px">${build.available
           ? `File: ${escapeHtml(build.downloadName)}${build.sizeBytes ? ` - ${formatBytes(build.sizeBytes)}` : ''} - Storage: ${escapeHtml(build.storage)}`
           : 'La build non e ancora presente sul server online.'}</p>
+        ${build.sha256 ? `<p class="muted" style="margin-top:10px">SHA256</p><code>${escapeHtml(build.sha256)}</code>` : ''}
         <div class="actions">
           ${build.available
             ? `<a class="button ${build.platform === 'x64' ? 'primary' : ''}" href="${build.route}">Scarica app ${build.platform === 'x64' ? '64 bit' : '32 bit'}</a>`
             : '<a class="button ghost" href="/admin">Carica da Admin</a>'}
+          <a class="button ghost" href="/verify">Verifica hash</a>
         </div>
       </article>
   `).join('');
@@ -597,6 +688,47 @@ function downloadHtml() {
       <div class="eyebrow">Sicurezza download</div>
       <h2>Firma digitale e SmartScreen</h2>
       <p>La build locale e' pronta per essere firmata. In produzione Sentinel dovra usare un certificato Code Signing valido: e' il modo corretto per far riconoscere a Windows publisher, integrita e attendibilita dell'app.</p>
+    </div>
+  </div>
+</main>`
+  });
+}
+
+async function verifyHtml() {
+  const builds = await downloadBuilds();
+  const cards = builds.map(build => {
+    const command = `Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\\Downloads\\${build.downloadName}"`;
+    return `<article class="panel">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start">
+        <div>
+          <h2>${escapeHtml(build.label)}</h2>
+          <p class="muted">${escapeHtml(build.downloadName)}${build.sizeBytes ? ` - ${formatBytes(build.sizeBytes)}` : ''}</p>
+        </div>
+        <span class="badge ${build.sha256 ? '' : 'danger'}">${build.sha256 ? 'Hash disponibile' : 'Hash mancante'}</span>
+      </div>
+      <p class="muted" style="margin-top:16px">SHA256 ufficiale</p>
+      <code>${escapeHtml(build.sha256 || 'Non ancora generato')}</code>
+      <p class="muted" style="margin-top:16px">Comando PowerShell</p>
+      <code>${escapeHtml(command)}</code>
+      <div class="actions">
+        <a class="button ${build.platform === 'x64' ? 'primary' : ''}" href="${build.route}">Scarica</a>
+      </div>
+    </article>`;
+  }).join('');
+
+  return layoutPage({
+    title: 'Verifica Download',
+    active: 'verify',
+    body: `<main class="section">
+  <div class="wrap">
+    <div class="eyebrow">Download integrity</div>
+    <h1>Verifica download</h1>
+    <p class="hero-copy">Confronta lo SHA256 del file scaricato con quello ufficiale pubblicato da Sentinel. Se non coincidono, elimina il file e riscaricalo dal sito ufficiale.</p>
+    <div class="download-grid" style="margin-top:26px">${cards}</div>
+    <div class="panel" style="margin-top:18px">
+      <div class="eyebrow">Nota firma digitale</div>
+      <h2>Firma pronta, certificato non ancora attivo</h2>
+      <p>Questa verifica non sostituisce la firma Code Signing, ma rende controllabile l'integrita della build fino a quando non sara disponibile un certificato riconosciuto da Windows.</p>
     </div>
   </div>
 </main>`
@@ -661,15 +793,16 @@ function adminShell({ title, token, body }) {
   });
 }
 
-function adminPanelHtml(token) {
+async function adminPanelHtml(token) {
   const activeSessions = [...agentSessions.values()].filter(session => Date.now() - session.lastSeenAt <= sessionTtlMs).length;
   const suspiciousReports = agentReports.filter(isReportSuspicious);
-  const builds = downloadBuilds();
+  const builds = await downloadBuilds();
   const buildRows = builds.map(build => `
     <tr>
       <td>${escapeHtml(build.label)}</td>
       <td><span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'online' : 'mancante'}</span></td>
       <td>${escapeHtml(build.storage)}${build.sizeBytes ? ` - ${escapeHtml(formatBytes(build.sizeBytes))}` : ''}</td>
+      <td><code>${escapeHtml(build.sha256 ? build.sha256.slice(0, 20) + '...' : '-')}</code></td>
       <td>${build.updatedAt ? escapeHtml(build.updatedAt) : '-'}</td>
       <td><input type="file" accept=".exe" data-build-file="${escapeHtml(build.platform)}"></td>
       <td><button class="button" data-build-upload="${escapeHtml(build.platform)}">Carica</button></td>
@@ -690,7 +823,7 @@ function adminPanelHtml(token) {
   <h2>Build Windows</h2>
   <p class="muted">Carica qui gli eseguibili che verranno serviti dalla pagina Download. Il filename pubblico resta pulito: Sentinel Anticheat.exe.</p>
   <table style="margin-top:16px">
-    <thead><tr><th>Build</th><th>Stato</th><th>Dimensione</th><th>Aggiornata</th><th>File</th><th>Azione</th></tr></thead>
+    <thead><tr><th>Build</th><th>Stato</th><th>Storage</th><th>SHA256</th><th>Aggiornata</th><th>File</th><th>Azione</th></tr></thead>
     <tbody>${buildRows}</tbody>
   </table>
   <p class="muted" id="buildUploadStatus" style="margin-top:12px"></p>
@@ -734,7 +867,7 @@ function adminPanelHtml(token) {
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'upload_failed');
-        status.textContent = 'Build caricata: ' + data.downloadName + ' (' + data.sizeBytes + ' bytes).';
+        status.textContent = 'Build caricata: ' + data.downloadName + ' (' + data.sizeBytes + ' bytes), SHA256 ' + data.sha256 + '.';
         setTimeout(() => location.reload(), 800);
       } catch (error) {
         status.textContent = 'Upload fallito: ' + error.message;
@@ -1337,7 +1470,7 @@ function buildReportPdf(report) {
 
 async function saveDownloadBuild(payload) {
   const platform = String(payload.platform || '').toLowerCase();
-  const build = downloadBuilds().find(item => item.platform === platform);
+  const build = baseDownloadBuilds().find(item => item.platform === platform);
   if (!build) {
     return { ok: false, status: 400, error: 'invalid_platform' };
   }
@@ -1363,6 +1496,9 @@ async function saveDownloadBuild(payload) {
     return { ok: false, status: 413, error: 'file_too_large' };
   }
 
+  const fileSha256 = sha256Hex(buffer);
+  const uploadedAt = new Date().toISOString();
+
   if (cloudStorageEnabled) {
     await r2Client.send(new PutObjectCommand({
       Bucket: r2Bucket,
@@ -1374,6 +1510,7 @@ async function saveDownloadBuild(payload) {
       Metadata: {
         platform: build.platform,
         originalName: originalName || build.downloadName,
+        sha256: fileSha256,
         uploadedBy: 'sentinel-admin'
       }
     }));
@@ -1385,6 +1522,28 @@ async function saveDownloadBuild(payload) {
     fs.renameSync(tempPath, targetPath);
   }
 
+  const manifest = await readDownloadManifest();
+  const nextManifest = {
+    ...manifest,
+    builds: {
+      ...(manifest.builds || {}),
+      [build.platform]: {
+        platform: build.platform,
+        label: build.label,
+        filename: build.filename,
+        downloadName: build.downloadName,
+        route: build.route,
+        storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
+        objectKey: downloadObjectKey(build.filename),
+        publicUrl: cloudPublicUrl(build.filename) || null,
+        sizeBytes: buffer.length,
+        sha256: fileSha256,
+        uploadedAt
+      }
+    }
+  };
+  await writeDownloadManifest(nextManifest);
+
   return {
     ok: true,
     platform: build.platform,
@@ -1392,8 +1551,9 @@ async function saveDownloadBuild(payload) {
     downloadName: build.downloadName,
     storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
     publicUrl: cloudPublicUrl(build.filename) || null,
+    sha256: fileSha256,
     sizeBytes: buffer.length,
-    updatedAt: new Date().toISOString()
+    updatedAt: uploadedAt
   };
 }
 
@@ -1501,7 +1661,17 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/download') {
-    writeHtml(res, 200, downloadHtml());
+    writeHtml(res, 200, await downloadHtml());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/verify') {
+    writeHtml(res, 200, await verifyHtml());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/download/manifest.json') {
+    writeJson(res, 200, await readDownloadManifest());
     return;
   }
 
@@ -1525,7 +1695,7 @@ export const server = http.createServer(async (req, res) => {
       writeHtml(res, 401, adminLoginHtml());
       return;
     }
-    writeHtml(res, 200, adminPanelHtml(url.searchParams.get('token')));
+    writeHtml(res, 200, await adminPanelHtml(url.searchParams.get('token')));
     return;
   }
 
