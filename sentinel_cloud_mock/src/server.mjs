@@ -36,6 +36,7 @@ const sessionTtlMs = Number(process.env.SENTINEL_SESSION_TTL_MS || 15_000);
 const blockedSessionTtlMs = Number(process.env.SENTINEL_BLOCKED_SESSION_TTL_MS || 300_000);
 
 fs.mkdirSync(dataDir, { recursive: true });
+fs.mkdirSync(downloadsDir, { recursive: true });
 
 const events = [];
 const agentReports = [];
@@ -278,6 +279,44 @@ function writeText(res, status, text) {
   res.end(text);
 }
 
+function downloadBuilds() {
+  const builds = [
+    {
+      platform: 'x64',
+      label: 'Windows 64 bit',
+      route: '/download/windows-x64',
+      filename: 'SentinelAnticheat-Windows-x64.exe',
+      downloadName: 'Sentinel Anticheat.exe'
+    },
+    {
+      platform: 'x86',
+      label: 'Windows 32 bit',
+      route: '/download/windows-x86',
+      filename: 'SentinelAnticheat-Windows-x86.exe',
+      downloadName: 'Sentinel Anticheat 32 bit.exe'
+    }
+  ];
+
+  return builds.map(build => {
+    const filePath = path.join(downloadsDir, build.filename);
+    const exists = fs.existsSync(filePath);
+    const stat = exists ? fs.statSync(filePath) : null;
+    return {
+      ...build,
+      available: exists,
+      sizeBytes: stat?.size || 0,
+      updatedAt: stat?.mtime.toISOString() || null
+    };
+  });
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -484,6 +523,29 @@ function homeHtml() {
 }
 
 function downloadHtml() {
+  const builds = downloadBuilds();
+  const buildCards = builds.map(build => `
+      <article class="panel">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start">
+          <div>
+            <h2>${escapeHtml(build.label)}</h2>
+            <p>${build.platform === 'x64'
+              ? "Consigliato per la maggior parte dei PC moderni. Scarica direttamente l'app Sentinel Anticheat con icona ufficiale."
+              : "Compatibilita legacy per PC piu vecchi. Scarica direttamente l'eseguibile Windows."}</p>
+          </div>
+          <span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'Disponibile' : 'Da caricare'}</span>
+        </div>
+        <p class="muted" style="margin-top:14px">${build.available
+          ? `File: ${escapeHtml(build.downloadName)} - ${formatBytes(build.sizeBytes)}`
+          : 'La build non e ancora presente sul server online.'}</p>
+        <div class="actions">
+          ${build.available
+            ? `<a class="button ${build.platform === 'x64' ? 'primary' : ''}" href="${build.route}">Scarica app ${build.platform === 'x64' ? '64 bit' : '32 bit'}</a>`
+            : '<a class="button ghost" href="/admin">Carica da Admin</a>'}
+        </div>
+      </article>
+  `).join('');
+
   return layoutPage({
     title: 'Download',
     active: 'download',
@@ -492,18 +554,7 @@ function downloadHtml() {
     <div class="eyebrow">Windows client</div>
     <h1>Scarica Sentinel Anticheat</h1>
     <p class="hero-copy">Scarica l'app Windows ufficiale. Al primo avvio collega Discord, esegue la verifica locale e mantiene la sessione anticheat attiva durante la permanenza nel server.</p>
-    <div class="download-grid" style="margin-top:26px">
-      <article class="panel">
-        <h2>Windows 64 bit</h2>
-        <p>Consigliato per la maggior parte dei PC moderni. Scarica direttamente l'app Sentinel Anticheat con icona ufficiale.</p>
-        <div class="actions"><a class="button primary" href="/download/windows-x64">Scarica app 64 bit</a></div>
-      </article>
-      <article class="panel">
-        <h2>Windows 32 bit</h2>
-        <p>Compatibilita legacy per PC piu vecchi. Scarica direttamente l'eseguibile Windows.</p>
-        <div class="actions"><a class="button" href="/download/windows-x86">Scarica app 32 bit</a></div>
-      </article>
-    </div>
+    <div class="download-grid" style="margin-top:26px">${buildCards}</div>
     <div class="panel" style="margin-top:18px">
       <div class="eyebrow">Sicurezza download</div>
       <h2>Firma digitale e SmartScreen</h2>
@@ -575,6 +626,17 @@ function adminShell({ title, token, body }) {
 function adminPanelHtml(token) {
   const activeSessions = [...agentSessions.values()].filter(session => Date.now() - session.lastSeenAt <= sessionTtlMs).length;
   const suspiciousReports = agentReports.filter(isReportSuspicious);
+  const builds = downloadBuilds();
+  const buildRows = builds.map(build => `
+    <tr>
+      <td>${escapeHtml(build.label)}</td>
+      <td><span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'online' : 'mancante'}</span></td>
+      <td>${build.available ? escapeHtml(formatBytes(build.sizeBytes)) : '-'}</td>
+      <td>${build.updatedAt ? escapeHtml(build.updatedAt) : '-'}</td>
+      <td><input type="file" accept=".exe" data-build-file="${escapeHtml(build.platform)}"></td>
+      <td><button class="button" data-build-upload="${escapeHtml(build.platform)}">Carica</button></td>
+    </tr>
+  `).join('');
   return adminShell({
     title: 'Admin',
     token,
@@ -584,7 +646,66 @@ function adminPanelHtml(token) {
   <article class="card"><h3>Report sospetti</h3><p class="value">${suspiciousReports.length}</p></article>
   <article class="card"><h3>Ban report</h3><p class="value">${banReports.length}</p></article>
   <article class="card"><h3>Sessioni attive</h3><p class="value">${activeSessions}</p></article>
-</section>`
+</section>
+<section class="panel" style="margin-top:18px">
+  <div class="eyebrow">Release download</div>
+  <h2>Build Windows</h2>
+  <p class="muted">Carica qui gli eseguibili che verranno serviti dalla pagina Download. Il filename pubblico resta pulito: Sentinel Anticheat.exe.</p>
+  <table style="margin-top:16px">
+    <thead><tr><th>Build</th><th>Stato</th><th>Dimensione</th><th>Aggiornata</th><th>File</th><th>Azione</th></tr></thead>
+    <tbody>${buildRows}</tbody>
+  </table>
+  <p class="muted" id="buildUploadStatus" style="margin-top:12px"></p>
+</section>
+<script>
+  async function fileToBase64(file) {
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  document.querySelectorAll('[data-build-upload]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const platform = button.dataset.buildUpload;
+      const input = document.querySelector('[data-build-file="' + platform + '"]');
+      const status = document.getElementById('buildUploadStatus');
+      if (!input?.files?.length) {
+        status.textContent = 'Seleziona prima un file .exe.';
+        return;
+      }
+      const file = input.files[0];
+      if (!file.name.toLowerCase().endsWith('.exe')) {
+        status.textContent = 'Puoi caricare solo file .exe.';
+        return;
+      }
+      button.disabled = true;
+      status.textContent = 'Upload in corso...';
+      try {
+        const response = await fetch('/v1/admin/download/upload', {
+          method:'POST',
+          headers:{'content-type':'application/json'},
+          body: JSON.stringify({
+            token:${JSON.stringify(token)},
+            platform,
+            originalName:file.name,
+            contentBase64: await fileToBase64(file)
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'upload_failed');
+        status.textContent = 'Build caricata: ' + data.downloadName + ' (' + data.sizeBytes + ' bytes).';
+        setTimeout(() => location.reload(), 800);
+      } catch (error) {
+        status.textContent = 'Upload fallito: ' + error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+</script>`
   });
 }
 
@@ -1176,6 +1297,50 @@ function buildReportPdf(report) {
   });
 }
 
+function saveDownloadBuild(payload) {
+  const platform = String(payload.platform || '').toLowerCase();
+  const build = downloadBuilds().find(item => item.platform === platform);
+  if (!build) {
+    return { ok: false, status: 400, error: 'invalid_platform' };
+  }
+
+  const originalName = path.basename(String(payload.originalName || ''));
+  if (originalName && !originalName.toLowerCase().endsWith('.exe')) {
+    return { ok: false, status: 400, error: 'invalid_file_extension' };
+  }
+
+  const contentBase64 = String(payload.contentBase64 || '').replace(/^data:.*?;base64,/, '');
+  let buffer;
+  try {
+    buffer = Buffer.from(contentBase64, 'base64');
+  } catch {
+    return { ok: false, status: 400, error: 'invalid_base64' };
+  }
+
+  if (buffer.length < 2 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) {
+    return { ok: false, status: 400, error: 'invalid_windows_exe' };
+  }
+
+  if (buffer.length > 50 * 1024 * 1024) {
+    return { ok: false, status: 413, error: 'file_too_large' };
+  }
+
+  fs.mkdirSync(downloadsDir, { recursive: true });
+  const targetPath = path.join(downloadsDir, build.filename);
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, buffer);
+  fs.renameSync(tempPath, targetPath);
+
+  return {
+    ok: true,
+    platform: build.platform,
+    filename: build.filename,
+    downloadName: build.downloadName,
+    sizeBytes: buffer.length,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function streamDownload(res, filename, downloadName = filename) {
   const safeName = path.basename(filename);
   const safeDownloadName = path.basename(downloadName);
@@ -1455,6 +1620,20 @@ export const server = http.createServer(async (req, res) => {
       ban.unbannedAt = new Date().toISOString();
     }
     writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/v1/admin/download/upload') {
+    if (!isAdminToken(payload.token)) {
+      writeJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+    const result = saveDownloadBuild(payload);
+    if (!result.ok) {
+      writeJson(res, result.status || 400, { error: result.error || 'upload_failed' });
+      return;
+    }
+    writeJson(res, 200, result);
     return;
   }
 
