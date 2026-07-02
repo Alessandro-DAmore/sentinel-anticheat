@@ -735,11 +735,160 @@ function siteStyle() {
     .split { display:grid; grid-template-columns:minmax(0,.92fr) minmax(320px,1.08fr); gap:28px; align-items:start; }
     .muted { color:var(--muted); }
     .footer { padding:28px 0; color:var(--muted); border-top:1px solid var(--line); }
+    .portal-hero {
+      min-height:calc(100vh - 76px);
+      display:grid;
+      place-items:center;
+      text-align:center;
+      padding:56px 0 74px;
+      position:relative;
+      overflow:hidden;
+      isolation:isolate;
+      background:
+        radial-gradient(circle at 50% 26%, rgba(0,153,255,.19), transparent 32%),
+        radial-gradient(circle at 50% 72%, rgba(174,184,195,.1), transparent 34%),
+        linear-gradient(180deg, rgba(3,9,16,.45), rgba(2,7,13,.96));
+    }
+    .portal-hero::before {
+      content:"";
+      position:absolute;
+      inset:-20%;
+      z-index:-2;
+      background:
+        linear-gradient(90deg, transparent 0 49%, rgba(0,153,255,.18) 50%, transparent 51%),
+        linear-gradient(0deg, rgba(174,184,195,.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,153,255,.045) 1px, transparent 1px);
+      background-size:100% 100%, 88px 88px, 88px 88px;
+      transform:perspective(900px) rotateX(58deg) translateY(12%);
+      transform-origin:center bottom;
+      opacity:.78;
+    }
+    .portal-hero::after {
+      content:"";
+      position:absolute;
+      inset:auto 0 0;
+      height:36%;
+      z-index:-1;
+      background:linear-gradient(180deg, transparent, rgba(0,153,255,.08), rgba(2,7,13,.96));
+      border-top:1px solid rgba(0,153,255,.18);
+    }
+    .portal-center { display:flex; flex-direction:column; align-items:center; }
+    .portal-logo {
+      width:clamp(116px, 15vw, 190px);
+      height:auto;
+      object-fit:contain;
+      margin-bottom:22px;
+      filter:drop-shadow(0 34px 44px rgba(0,0,0,.58)) drop-shadow(0 0 36px rgba(0,153,255,.2));
+    }
+    .portal-title {
+      margin:0;
+      font-size:clamp(66px, 12vw, 168px);
+      line-height:.78;
+      text-transform:uppercase;
+      letter-spacing:.075em;
+      font-weight:900;
+      color:#f4f8fb;
+      text-shadow:0 4px 0 rgba(0,0,0,.28), 0 0 42px rgba(0,153,255,.15);
+    }
+    .portal-title span {
+      display:block;
+      margin-top:24px;
+      margin-left:.42em;
+      color:var(--accent);
+      font-size:clamp(24px, 4vw, 52px);
+      line-height:1;
+      letter-spacing:.52em;
+      text-shadow:0 0 26px rgba(0,153,255,.42);
+    }
+    .portal-subtitle {
+      max-width:780px;
+      margin:32px auto 0;
+      color:#c4d4e2;
+      font-size:clamp(17px, 2vw, 23px);
+      font-weight:700;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+    }
+    .portal-actions {
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:16px;
+      margin-top:34px;
+    }
+    .slash-button {
+      min-width:210px;
+      min-height:58px;
+      border-radius:0;
+      clip-path:polygon(12% 0, 100% 0, 88% 100%, 0 100%);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      padding-inline:36px;
+    }
+    .portal-ghost {
+      min-width:190px;
+      min-height:58px;
+      border-radius:0;
+      clip-path:polygon(12% 0, 100% 0, 88% 100%, 0 100%);
+      border-color:rgba(174,184,195,.55);
+      background:rgba(7,17,27,.52);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .portal-section {
+      padding:78px 0;
+      border-top:1px solid rgba(0,153,255,.22);
+      background:
+        linear-gradient(180deg, rgba(3,9,16,.94), rgba(6,14,23,.96)),
+        radial-gradient(circle at 20% 10%, rgba(0,153,255,.08), transparent 28%);
+    }
+    .portal-section .section-head { text-align:center; margin-inline:auto; }
+    .portal-stats {
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:12px;
+      margin-top:28px;
+    }
+    .portal-stat {
+      border:1px solid rgba(47,83,111,.86);
+      background:linear-gradient(180deg, rgba(12,25,38,.92), rgba(3,9,16,.86));
+      min-height:132px;
+      display:grid;
+      place-items:center;
+      text-align:center;
+      padding:18px;
+      clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    }
+    .portal-stat b { display:block; color:#f3f8fd; font-size:26px; line-height:1; margin-bottom:8px; }
+    .portal-stat span { color:#91a8ba; text-transform:uppercase; letter-spacing:.12em; font-size:12px; }
+    .feature-band {
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:14px;
+      margin-top:26px;
+    }
+    .feature-band .card {
+      min-height:190px;
+      display:flex;
+      flex-direction:column;
+      justify-content:flex-end;
+      border-radius:0;
+      clip-path:polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+      background:
+        linear-gradient(180deg, rgba(13,26,39,.96), rgba(3,9,16,.96)),
+        radial-gradient(circle at 50% 0, rgba(0,153,255,.14), transparent 40%);
+    }
+    .login-portal { min-height:calc(100vh - 76px); }
+    .login-title { font-size:clamp(52px, 9vw, 116px); }
+    .login-title span { letter-spacing:.28em; margin-left:.28em; }
     @media (max-width:840px) {
       .hero-grid, .grid3, .split, .metric-row { grid-template-columns:1fr; }
       .links { flex-wrap:wrap; justify-content:flex-end; }
       .nav { height:auto; padding:12px 0; align-items:flex-start; }
       .finding { grid-template-columns:1fr; }
+      .portal-stats, .feature-band { grid-template-columns:1fr; }
+      .portal-title span { letter-spacing:.28em; margin-left:.28em; }
+      .portal-subtitle { letter-spacing:.06em; }
     }
   </style>`;
 }
@@ -777,35 +926,35 @@ function homeHtml() {
   return layoutPage({
     title: 'Home',
     active: 'home',
-    body: `<main class="hero">
-  <div class="wrap hero-grid">
-    <section>
-      <div class="eyebrow">Protecting fair play</div>
-      <h1>Sentinel Anticheat</h1>
-      <p class="hero-copy">Client anticheat desktop per server FiveM: collega l'identita Discord, verifica l'ambiente locale, mantiene una sessione live durante il gioco e genera report tecnici leggibili dallo staff.</p>
-      <div class="actions">
-        <a class="button primary" href="/download">Scarica l'app</a>
-        <a class="button ghost" href="/admin">Login staff</a>
-      </div>
-      <div class="metric-row">
-        <div class="metric"><b>Live</b><span>Heartbeat client</span></div>
-        <div class="metric"><b>PDF</b><span>Report staff</span></div>
-        <div class="metric"><b>Discord</b><span>Identity link</span></div>
-      </div>
-    </section>
-    <aside class="logo-stage" aria-label="Sentinel Anticheat logo">
-      ${logoImage('hero-mark')}
-    </aside>
+    body: `<main class="portal-hero">
+  <div class="wrap portal-center">
+    ${logoImage('portal-logo')}
+    <h1 class="portal-title">Sentinel<span>Anticheat</span></h1>
+    <p class="portal-subtitle">FiveM desktop protection</p>
+    <div class="portal-actions">
+      <a class="button primary slash-button" href="/download">Download</a>
+      <a class="button portal-ghost" href="/admin">Login staff</a>
+    </div>
   </div>
 </main>
-<section class="section">
+<section class="portal-section">
+  <div class="wrap">
+    <div class="portal-stats">
+      <div class="portal-stat"><b>Live</b><span>Heartbeat client</span></div>
+      <div class="portal-stat"><b>PDF</b><span>Report staff</span></div>
+      <div class="portal-stat"><b>Discord</b><span>Identity link</span></div>
+      <div class="portal-stat"><b>FiveM</b><span>Server guard</span></div>
+    </div>
+  </div>
+</section>
+<section class="portal-section">
   <div class="wrap">
     <div class="section-head">
       <div class="eyebrow">Sistema anticheat</div>
       <h2>Controllo locale, decisioni server-side, report chiari.</h2>
       <p>Sentinel separa i dati sensibili dal lavoro dello staff: il client invia report cifrati e l'admin vede solo informazioni utili alla revisione.</p>
     </div>
-    <div class="grid3">
+    <div class="feature-band">
       <article class="card"><div class="num">01</div><h3>Discord-first</h3><p>Ogni report lega il controllo al Discord ID del player, cosi lo staff sa chi deve verificare.</p></article>
       <article class="card"><div class="num">02</div><h3>Sessione obbligatoria</h3><p>Il resource FiveM verifica che il client Sentinel resti aperto; se la sessione sparisce, il player viene espulso.</p></article>
       <article class="card"><div class="num">03</div><h3>Runtime guard</h3><p>Dopo il controllo iniziale, Sentinel continua a monitorare segnali sospetti mentre il player e' in gioco.</p></article>
@@ -815,7 +964,7 @@ function homeHtml() {
     </div>
   </div>
 </section>
-<section class="section">
+<section class="portal-section">
   <div class="wrap split">
     <div>
       <div class="eyebrow">Flow operativo</div>
@@ -929,20 +1078,15 @@ function adminLoginHtml() {
   return layoutPage({
     title: 'Login',
     active: 'login',
-    body: `<main class="section">
-  <div class="wrap admin-grid">
-    <section>
-      <div class="eyebrow">Secure staff access</div>
-      <h1>Login</h1>
-      <p class="hero-copy">Accedi con Discord e richiedi l'accesso allo staff Sentinel. Un Administrator potra approvare o rifiutare l'account e assegnare il ruolo.</p>
-    </section>
-    <section class="panel">
-      <div class="eyebrow">Discord OAuth</div>
-      <h2>Accesso staff</h2>
-      <p>Il primo account approvato diventa Administrator di bootstrap. Gli account successivi restano in attesa finche un Administrator non li approva.</p>
-      <div class="actions"><a class="button primary" href="/auth/staff/start">Accedi con Discord</a></div>
-      <p class="muted" style="margin-top:18px">Ruoli: Administrator ha tutti i poteri; Admin puo consultare report e ban, ma non puo revocare ban o gestire altri admin.</p>
-    </section>
+    body: `<main class="portal-hero login-portal">
+  <div class="wrap portal-center">
+    ${logoImage('portal-logo')}
+    <div class="eyebrow">Discord OAuth</div>
+    <h1 class="portal-title login-title">Accesso<span>Staff</span></h1>
+    <p class="portal-subtitle">Pannello Sentinel Anticheat</p>
+    <div class="portal-actions">
+      <a class="button primary slash-button" href="/auth/staff/start">Accedi con Discord</a>
+    </div>
   </div>
 </main>`
   });
