@@ -1,0 +1,110 @@
+{
+  "version": "2026.07.02.1",
+  "notes": "Development signature feed. Add SHA-256 indicators only after confirmed manual analysis; do not use unverified public lists for production bans.",
+  "publisher": "Sentinel Anticheat",
+  "minimumClientVersion": "0.2.0",
+  "updatedAt": "2026-07-02T00:00:00.000Z",
+  "knownBadSha256": [
+  ],
+  "runtimeMarkers": [
+    "sentinel_runtime_probe"
+  ],
+  "behaviorRules": {
+    "trackNewProcesses": true,
+    "flagUnsignedUserWritableProcesses": true,
+    "userWritablePaths": [
+      "%TEMP%",
+      "%USERPROFILE%\\Downloads",
+      "%LOCALAPPDATA%\\Temp"
+    ],
+    "ignoredProcessNames": [
+      "discord.exe",
+      "steam.exe",
+      "steamwebhelper.exe",
+      "nvidia overlay.exe",
+      "obs64.exe"
+    ]
+  },
+  "moduleRules": {
+    "enabled": true,
+    "processNames": [
+      "FiveM.exe",
+      "GTA5.exe",
+      "FiveM_b2699_GTAProcess.exe",
+      "FiveM_b2802_GTAProcess.exe",
+      "FiveM_b2944_GTAProcess.exe",
+      "FiveM_b3095_GTAProcess.exe",
+      "FiveM_b3258_GTAProcess.exe"
+    ],
+    "watchPaths": [
+      "%TEMP%",
+      "%USERPROFILE%\\Downloads",
+      "%LOCALAPPDATA%\\Temp",
+      "%LOCALAPPDATA%\\FiveM\\FiveM.app\\plugins",
+      "C:\\Program Files\\Rockstar Games\\Grand Theft Auto V\\plugins",
+      "C:\\Program Files (x86)\\Rockstar Games\\Grand Theft Auto V\\plugins"
+    ]
+  },
+  "trustedPublishers": [
+    "Microsoft",
+    "Discord",
+    "Valve",
+    "NVIDIA",
+    "AMD",
+    "Advanced Micro Devices",
+    "Rockstar Games",
+    "Cfx.re",
+    "CitizenFX",
+    "OBS Project"
+  ],
+  "suspiciousNames": [
+    "eulen",
+    "redengine",
+    "lynx",
+    "hammafia",
+    "tzproject",
+    "skript",
+    "dopamine",
+    "fallout",
+    "desudo",
+    "hxcheats",
+    "fivem cheat",
+    "fivem mod menu",
+    "executor",
+    "injector",
+    "dll injector",
+    "modmenu",
+    "aimbot",
+    "triggerbot",
+    "silent aim",
+    "esp",
+    "wallhack",
+    "bypass",
+    "spoofer",
+    "hwid spoofer",
+    "dumper"
+  ],
+  "suspiciousPaths": [
+    "\\AppData\\Local\\Temp\\",
+    "\\AppData\\Roaming\\",
+    "\\FiveM\\FiveM.app\\plugins\\",
+    "\\CitizenFX\\",
+    "\\Rockstar Games\\Grand Theft Auto V\\plugins\\"
+  ],
+  "suspiciousDrivers": [
+    "dbk64",
+    "kprocesshacker",
+    "capcom",
+    "gdrv",
+    "inpoutx64",
+    "winring0"
+  ],
+  "allowedTools": [
+    "steam overlay",
+    "discord overlay",
+    "nvidia overlay",
+    "amd overlay",
+    "msi afterburner",
+    "rtss"
+  ]
+}

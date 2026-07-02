@@ -1,0 +1,23 @@
+# Local runtime/cache
+**/node_modules/
+**/.env
+**/.env.local
+**/.env.production
+
+# Sentinel local generated data
+sentinel_desktop/logs/
+sentinel_desktop/reports/
+sentinel_desktop/build/
+sentinel_cloud_mock/downloads/*.zip
+sentinel_cloud_mock/downloads/*.exe
+
+# FXServer local install/build artifacts
+fxserver_local/
+fxserver_test/
+
+# OS/editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

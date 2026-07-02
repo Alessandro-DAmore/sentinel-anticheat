@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: sentinel-anticheat
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: sentinel_cloud_mock
+    buildCommand: npm install
+    startCommand: node src/server.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: SENTINEL_HOST
+        value: 0.0.0.0
+      - key: SENTINEL_PUBLIC_BASE_URL
+        sync: false
+      - key: SENTINEL_SHARED_SECRET
+        sync: false
+      - key: SENTINEL_LICENSE_KEYS
+        sync: false
+      - key: SENTINEL_SERVER_KEYS
+        sync: false
+      - key: SENTINEL_DASHBOARD_TOKEN
+        sync: false
+      - key: SENTINEL_ADMIN_USER
+        sync: false
+      - key: SENTINEL_ADMIN_PASSWORD
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_REDIRECT_URI
+        sync: false
