@@ -19,6 +19,7 @@ const assetsDir = path.join(packageRoot, 'assets');
 const dataDir = path.join(packageRoot, 'data');
 const signaturesPath = path.join(dataDir, 'signatures.json');
 const downloadManifestPath = path.join(dataDir, 'download-manifest.json');
+const staffAccountsPath = path.join(dataDir, 'staff-accounts.json');
 
 const host = process.env.SENTINEL_HOST || '127.0.0.1';
 const port = Number(process.env.PORT || process.env.SENTINEL_PORT || 8787);
@@ -29,6 +30,11 @@ const serverKeys = new Set((process.env.SENTINEL_SERVER_KEYS || 'CHANGE_ME_SENTI
 const dashboardToken = process.env.SENTINEL_DASHBOARD_TOKEN || 'CHANGE_ME_DASHBOARD_TOKEN';
 const adminUser = process.env.SENTINEL_ADMIN_USER || 'admin';
 const adminPassword = process.env.SENTINEL_ADMIN_PASSWORD || 'CHANGE_ME_ADMIN_PASSWORD';
+const bootstrapAdminDiscordIds = new Set((process.env.SENTINEL_BOOTSTRAP_ADMIN_DISCORD_IDS || '')
+  .split(',')
+  .map(item => normalizeDiscordId(item))
+  .filter(Boolean));
+const allowFirstStaffAdministrator = String(process.env.SENTINEL_STAFF_ALLOW_FIRST_ADMIN || '').toLowerCase() === 'true';
 const discordClientId = process.env.DISCORD_CLIENT_ID || '';
 const discordClientSecret = process.env.DISCORD_CLIENT_SECRET || '';
 const discordRedirectUri = process.env.DISCORD_REDIRECT_URI || `${publicBaseUrl}/auth/discord/callback`;
@@ -70,6 +76,7 @@ const banReports = [];
 const agentSessions = new Map();
 const discordLinks = new Map();
 const oauthStates = new Map();
+const staffSessions = new Map();
 
 function stableHash(input, seed = 5381) {
   let hash = seed >>> 0;
@@ -426,6 +433,180 @@ async function downloadBuilds() {
   return localDownloadBuilds(await readDownloadManifest());
 }
 
+function emptyStaffStore() {
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    accounts: {}
+  };
+}
+
+async function readStaffStore() {
+  if (cloudStorageEnabled) {
+    try {
+      const object = await r2Client.send(new GetObjectCommand({
+        Bucket: r2Bucket,
+        Key: dataObjectKey('staff-accounts.json')
+      }));
+      return JSON.parse((await objectBodyToBuffer(object.Body)).toString('utf8'));
+    } catch {
+      // Fall through to local bootstrap/fallback store.
+    }
+  }
+
+  try {
+    return fs.existsSync(staffAccountsPath)
+      ? JSON.parse(fs.readFileSync(staffAccountsPath, 'utf8'))
+      : emptyStaffStore();
+  } catch {
+    return emptyStaffStore();
+  }
+}
+
+async function writeStaffStore(store) {
+  const nextStore = {
+    ...store,
+    version: 1,
+    generatedAt: new Date().toISOString()
+  };
+  const raw = JSON.stringify(nextStore, null, 2);
+  fs.writeFileSync(staffAccountsPath, `${raw}\n`, 'utf8');
+
+  if (cloudStorageEnabled) {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: dataObjectKey('staff-accounts.json'),
+      Body: raw,
+      ContentType: 'application/json; charset=utf-8',
+      CacheControl: 'no-store'
+    }));
+  }
+
+  return nextStore;
+}
+
+function hasApprovedAdministrator(store) {
+  return Object.values(store.accounts || {}).some(account => (
+    account.status === 'approved' && account.role === 'Administrator'
+  ));
+}
+
+function createStaffSession(account) {
+  const token = randomUUID();
+  staffSessions.set(token, {
+    token,
+    discordId: account.discordId,
+    username: account.username,
+    role: account.role,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000
+  });
+  return token;
+}
+
+function getStaffSession(token) {
+  const raw = String(token || '');
+  if (!raw) return null;
+
+  if (raw === dashboardToken) {
+    return {
+      token: raw,
+      discordId: 'bootstrap',
+      username: 'Bootstrap Administrator',
+      role: 'Administrator',
+      bootstrap: true
+    };
+  }
+
+  const session = staffSessions.get(raw);
+  if (!session) return null;
+  if (session.expiresAt && session.expiresAt < Date.now()) {
+    staffSessions.delete(raw);
+    return null;
+  }
+  return session;
+}
+
+function canUseStaffPanel(token) {
+  return Boolean(getStaffSession(token));
+}
+
+function canAdministrate(token) {
+  return getStaffSession(token)?.role === 'Administrator';
+}
+
+async function handleStaffDiscordLogin({ discordId, username }) {
+  const normalizedDiscordId = normalizeDiscordId(discordId);
+  const store = await readStaffStore();
+  const now = new Date().toISOString();
+  const existing = store.accounts?.[normalizedDiscordId];
+  const shouldBootstrap = bootstrapAdminDiscordIds.has(normalizedDiscordId)
+    || (allowFirstStaffAdministrator && !hasApprovedAdministrator(store));
+
+  let account = existing || {
+    discordId: normalizedDiscordId,
+    username,
+    role: shouldBootstrap ? 'Administrator' : null,
+    status: shouldBootstrap ? 'approved' : 'pending',
+    requestedAt: now
+  };
+
+  account = {
+    ...account,
+    discordId: normalizedDiscordId,
+    username: username || account.username || normalizedDiscordId,
+    lastLoginAt: now
+  };
+
+  if (shouldBootstrap && account.status !== 'approved') {
+    account.status = 'approved';
+    account.role = 'Administrator';
+    account.approvedAt = now;
+    account.approvedBy = 'bootstrap';
+  }
+
+  store.accounts = {
+    ...(store.accounts || {}),
+    [normalizedDiscordId]: account
+  };
+  await writeStaffStore(store);
+
+  const token = account.status === 'approved' ? createStaffSession(account) : null;
+  return { account, token };
+}
+
+function staffLoginResultHtml({ account, token }) {
+  const approved = account.status === 'approved';
+  const rejected = account.status === 'rejected';
+  const title = approved ? 'Login approvato' : rejected ? 'Account rifiutato' : 'Richiesta inviata';
+  const copy = approved
+    ? `Accesso consentito come ${account.role}.`
+    : rejected
+      ? 'Il tuo account staff e stato rifiutato da un Administrator.'
+      : 'Il tuo account e in attesa di approvazione. Un Administrator dovra assegnarti il ruolo Admin o Administrator.';
+
+  return layoutPage({
+    title: 'Login',
+    active: 'login',
+    body: `<main class="section"><div class="wrap">
+  <div class="eyebrow">Staff access</div>
+  <h1>${escapeHtml(title)}</h1>
+  <p class="hero-copy">${escapeHtml(copy)}</p>
+  <table style="margin-top:22px; max-width:720px">
+    <tbody>
+      <tr><th>Discord ID</th><td><code>${escapeHtml(account.discordId)}</code></td></tr>
+      <tr><th>Username</th><td>${escapeHtml(account.username || 'unknown')}</td></tr>
+      <tr><th>Stato</th><td><span class="badge ${approved ? '' : 'danger'}">${escapeHtml(account.status)}</span></td></tr>
+      <tr><th>Ruolo</th><td>${escapeHtml(account.role || 'non assegnato')}</td></tr>
+    </tbody>
+  </table>
+  <div class="actions">
+    ${approved ? `<a class="button primary" href="/admin/panel?token=${encodeURIComponent(token)}">Apri pannello</a>` : '<a class="button" href="/">Torna alla home</a>'}
+  </div>
+</div></main>`
+  });
+}
+
 function formatBytes(bytes) {
   const value = Number(bytes || 0);
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
@@ -436,6 +617,10 @@ function formatBytes(bytes) {
 function downloadObjectKey(filename) {
   const safeName = path.basename(filename);
   return storagePrefix ? `${storagePrefix}/${safeName}` : safeName;
+}
+
+function dataObjectKey(filename) {
+  return `data/${path.basename(filename)}`;
 }
 
 function cloudPublicUrl(filename) {
@@ -578,8 +763,7 @@ function layoutPage({ title, active = '', body }) {
       <div class="links">
         <a href="/" ${active === 'home' ? 'class="button primary"' : ''}>Home</a>
         <a href="/download" ${active === 'download' ? 'class="button primary"' : ''}>Download</a>
-        <a href="/verify" ${active === 'verify' ? 'class="button primary"' : ''}>Verifica</a>
-        <a href="/admin" ${active === 'admin' ? 'class="button primary"' : ''}>Admin</a>
+        <a href="/admin" ${active === 'login' || active === 'admin' ? 'class="button primary"' : ''}>Login</a>
       </div>
     </nav>
   </header>
@@ -601,7 +785,7 @@ function homeHtml() {
       <p class="hero-copy">Client anticheat desktop per server FiveM: collega l'identita Discord, verifica l'ambiente locale, mantiene una sessione live durante il gioco e genera report tecnici leggibili dallo staff.</p>
       <div class="actions">
         <a class="button primary" href="/download">Scarica l'app</a>
-        <a class="button ghost" href="/admin">Area Admin</a>
+        <a class="button ghost" href="/admin">Login staff</a>
       </div>
       <div class="metric-row">
         <div class="metric"><b>Live</b><span>Heartbeat client</span></div>
@@ -670,7 +854,7 @@ async function downloadHtml() {
           ${build.available
             ? `<a class="button ${build.platform === 'x64' ? 'primary' : ''}" href="${build.route}">Scarica app ${build.platform === 'x64' ? '64 bit' : '32 bit'}</a>`
             : '<a class="button ghost" href="/admin">Carica da Admin</a>'}
-          <a class="button ghost" href="/verify">Verifica hash</a>
+          <a class="button ghost" href="#integrita">Verifica hash</a>
         </div>
       </article>
   `).join('');
@@ -688,6 +872,12 @@ async function downloadHtml() {
       <div class="eyebrow">Sicurezza download</div>
       <h2>Firma digitale e SmartScreen</h2>
       <p>La build locale e' pronta per essere firmata. In produzione Sentinel dovra usare un certificato Code Signing valido: e' il modo corretto per far riconoscere a Windows publisher, integrita e attendibilita dell'app.</p>
+    </div>
+    <div class="panel" id="integrita" style="margin-top:18px">
+      <div class="eyebrow">Integrita file</div>
+      <h2>Verifica SHA256</h2>
+      <p>Per controllare un download, esegui PowerShell e confronta l'hash ottenuto con lo SHA256 ufficiale mostrato sopra.</p>
+      <code>Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\\Downloads\\Sentinel Anticheat.exe"</code>
     </div>
   </div>
 </main>`
@@ -737,55 +927,45 @@ async function verifyHtml() {
 
 function adminLoginHtml() {
   return layoutPage({
-    title: 'Admin Login',
-    active: 'admin',
+    title: 'Login',
+    active: 'login',
     body: `<main class="section">
   <div class="wrap admin-grid">
     <section>
       <div class="eyebrow">Secure staff access</div>
-      <h1>Area Admin</h1>
-      <p class="hero-copy">Inserisci le credenziali per aprire report utenti, ban e PDF di revisione.</p>
+      <h1>Login</h1>
+      <p class="hero-copy">Accedi con Discord e richiedi l'accesso allo staff Sentinel. Un Administrator potra approvare o rifiutare l'account e assegnare il ruolo.</p>
     </section>
-    <form class="panel" id="loginForm">
-      <label>Username</label>
-      <input name="username" autocomplete="username" value="">
-      <label>Password</label>
-      <input name="password" type="password" autocomplete="current-password">
-      <button class="button primary" type="submit">Accedi</button>
-      <p class="muted" id="loginMsg" style="margin-top:12px">Build locale: credenziali dev configurabili via env.</p>
-    </form>
+    <section class="panel">
+      <div class="eyebrow">Discord OAuth</div>
+      <h2>Accesso staff</h2>
+      <p>Il primo account approvato diventa Administrator di bootstrap. Gli account successivi restano in attesa finche un Administrator non li approva.</p>
+      <div class="actions"><a class="button primary" href="/auth/staff/start">Accedi con Discord</a></div>
+      <p class="muted" style="margin-top:18px">Ruoli: Administrator ha tutti i poteri; Admin puo consultare report e ban, ma non puo revocare ban o gestire altri admin.</p>
+    </section>
   </div>
-</main>
-<script>
-  document.getElementById('loginForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const response = await fetch('/v1/admin/login', {
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body: JSON.stringify({ username: form.get('username'), password: form.get('password') })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      document.getElementById('loginMsg').textContent = 'Credenziali non valide.';
-      return;
-    }
-    location.href = '/admin/panel?token=' + encodeURIComponent(data.token);
-  });
-</script>`
+</main>`
   });
 }
 
 function adminShell({ title, token, body }) {
+  const staff = getStaffSession(token);
+  const staffLinks = staff?.role === 'Administrator'
+    ? `<a class="button" href="/admin/staff?token=${encodeURIComponent(token)}">Staff</a>`
+    : '';
   return layoutPage({
     title,
     active: 'admin',
     body: `<main class="section">
   <div class="wrap">
-    <div class="links" style="justify-content:flex-start; margin-bottom:18px">
-      <a class="button primary" href="/admin/panel?token=${encodeURIComponent(token)}">Overview</a>
-      <a class="button" href="/admin/reports?token=${encodeURIComponent(token)}">Report</a>
-      <a class="button" href="/admin/bans?token=${encodeURIComponent(token)}">Ban</a>
+    <div class="links" style="justify-content:space-between; margin-bottom:18px">
+      <div class="links">
+        <a class="button primary" href="/admin/panel?token=${encodeURIComponent(token)}">Overview</a>
+        <a class="button" href="/admin/reports?token=${encodeURIComponent(token)}">Report</a>
+        <a class="button" href="/admin/bans?token=${encodeURIComponent(token)}">Ban</a>
+        ${staffLinks}
+      </div>
+      <span class="badge">${escapeHtml(staff?.role || 'Staff')}</span>
     </div>
     ${body}
   </div>
@@ -794,6 +974,7 @@ function adminShell({ title, token, body }) {
 }
 
 async function adminPanelHtml(token) {
+  const isAdministrator = isAdministratorToken(token);
   const activeSessions = [...agentSessions.values()].filter(session => Date.now() - session.lastSeenAt <= sessionTtlMs).length;
   const suspiciousReports = agentReports.filter(isReportSuspicious);
   const builds = await downloadBuilds();
@@ -804,8 +985,8 @@ async function adminPanelHtml(token) {
       <td>${escapeHtml(build.storage)}${build.sizeBytes ? ` - ${escapeHtml(formatBytes(build.sizeBytes))}` : ''}</td>
       <td><code>${escapeHtml(build.sha256 ? build.sha256.slice(0, 20) + '...' : '-')}</code></td>
       <td>${build.updatedAt ? escapeHtml(build.updatedAt) : '-'}</td>
-      <td><input type="file" accept=".exe" data-build-file="${escapeHtml(build.platform)}"></td>
-      <td><button class="button" data-build-upload="${escapeHtml(build.platform)}">Carica</button></td>
+      <td>${isAdministrator ? `<input type="file" accept=".exe" data-build-file="${escapeHtml(build.platform)}">` : '<span class="muted">Solo Administrator</span>'}</td>
+      <td>${isAdministrator ? `<button class="button" data-build-upload="${escapeHtml(build.platform)}">Carica</button>` : '-'}</td>
     </tr>
   `).join('');
   return adminShell({
@@ -821,14 +1002,14 @@ async function adminPanelHtml(token) {
 <section class="panel" style="margin-top:18px">
   <div class="eyebrow">Release download</div>
   <h2>Build Windows</h2>
-  <p class="muted">Carica qui gli eseguibili che verranno serviti dalla pagina Download. Il filename pubblico resta pulito: Sentinel Anticheat.exe.</p>
+  <p class="muted">${isAdministrator ? 'Carica qui gli eseguibili che verranno serviti dalla pagina Download. Il filename pubblico resta pulito: Sentinel Anticheat.exe.' : 'Puoi controllare lo stato delle build. Solo un Administrator puo caricare o sostituire gli eseguibili.'}</p>
   <table style="margin-top:16px">
     <thead><tr><th>Build</th><th>Stato</th><th>Storage</th><th>SHA256</th><th>Aggiornata</th><th>File</th><th>Azione</th></tr></thead>
     <tbody>${buildRows}</tbody>
   </table>
   <p class="muted" id="buildUploadStatus" style="margin-top:12px"></p>
 </section>
-<script>
+${isAdministrator ? `<script>
   async function fileToBase64(file) {
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -876,11 +1057,81 @@ async function adminPanelHtml(token) {
       }
     });
   });
+</script>` : ''}`
+  });
+}
+
+async function adminStaffHtml(token) {
+  const store = await readStaffStore();
+  const accounts = Object.values(store.accounts || {}).sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')));
+  const rows = accounts.map(account => {
+    const isBootstrap = account.discordId === 'bootstrap';
+    return `<tr data-staff-row data-search="${escapeHtml([account.discordId, account.username, account.status, account.role].filter(Boolean).join(' ').toLowerCase())}">
+      <td><code>${escapeHtml(account.discordId)}</code><br><span class="muted">${escapeHtml(account.username || '')}</span></td>
+      <td><span class="badge ${account.status === 'approved' ? '' : 'danger'}">${escapeHtml(account.status || 'pending')}</span></td>
+      <td>${escapeHtml(account.role || 'non assegnato')}</td>
+      <td>${escapeHtml(account.requestedAt || '-')}</td>
+      <td>${escapeHtml(account.lastLoginAt || '-')}</td>
+      <td>
+        <select data-staff-role="${escapeHtml(account.discordId)}" style="width:150px; border:1px solid var(--line); border-radius:10px; background:#050a10; color:var(--text); padding:10px">
+          <option value="Admin" ${account.role === 'Admin' ? 'selected' : ''}>Admin</option>
+          <option value="Administrator" ${account.role === 'Administrator' ? 'selected' : ''}>Administrator</option>
+        </select>
+      </td>
+      <td>
+        <div class="actions" style="margin-top:0">
+          <button class="button primary" data-staff-action="approve" data-discord-id="${escapeHtml(account.discordId)}">Approva</button>
+          <button class="button" data-staff-action="reject" data-discord-id="${escapeHtml(account.discordId)}">Rifiuta</button>
+          <button class="button" data-staff-action="remove" data-discord-id="${escapeHtml(account.discordId)}" ${isBootstrap ? 'disabled' : ''}>Rimuovi</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return adminShell({
+    title: 'Staff',
+    token,
+    body: `<div class="eyebrow">Administrator</div>
+<h1>Gestione staff</h1>
+<p class="hero-copy">Approva gli account Discord e assegna il ruolo. Solo gli Administrator possono modificare questa schermata.</p>
+<input id="staffSearch" placeholder="Cerca per Discord ID, username, stato o ruolo" style="margin-top:18px; max-width:520px">
+<table style="margin-top:22px">
+  <thead><tr><th>Discord</th><th>Stato</th><th>Ruolo</th><th>Richiesta</th><th>Ultimo login</th><th>Nuovo ruolo</th><th>Azioni</th></tr></thead>
+  <tbody>${rows || '<tr><td colspan="7" class="muted">Nessun account staff.</td></tr>'}</tbody>
+</table>
+<script>
+  const staffSearch = document.getElementById('staffSearch');
+  staffSearch?.addEventListener('input', () => {
+    const query = staffSearch.value.trim().toLowerCase();
+    document.querySelectorAll('[data-staff-row]').forEach(row => {
+      row.style.display = !query || row.dataset.search.includes(query) ? '' : 'none';
+    });
+  });
+  document.querySelectorAll('[data-staff-action]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const discordId = button.dataset.discordId;
+      const action = button.dataset.staffAction;
+      const role = document.querySelector('[data-staff-role="' + discordId + '"]')?.value || 'Admin';
+      if (action === 'remove' && !confirm('Rimuovere questo account staff?')) return;
+      const response = await fetch('/v1/admin/staff/update', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({ token:${JSON.stringify(token)}, discordId, action, role })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || 'Operazione non riuscita');
+        return;
+      }
+      location.reload();
+    });
+  });
 </script>`
   });
 }
 
 function reportCard(report, token) {
+  const isAdministrator = isAdministratorToken(token);
   const payload = report.payload || {};
   const summary = payload.summary || {};
   const identity = payload.identity || {};
@@ -935,6 +1186,7 @@ function reportCard(report, token) {
       <button class="button" data-report-ban="${escapeHtml(report.id)}">Banna player</button>
       <button class="button" data-report-review="${escapeHtml(report.id)}" data-review-status="reviewed">Segna verificato</button>
       <button class="button" data-report-review="${escapeHtml(report.id)}" data-review-status="false_positive">Falso positivo</button>
+      ${isAdministrator ? `<button class="button" data-report-delete="${escapeHtml(report.id)}">Elimina report</button>` : ''}
     </div>
   </article>`;
 }
@@ -987,11 +1239,28 @@ function adminReportsHtml(token) {
       location.href = '/admin/bans?token=' + encodeURIComponent(${JSON.stringify(token)});
     });
   });
+  document.querySelectorAll('[data-report-delete]').forEach(button => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Eliminare definitivamente questo report?')) return;
+      const response = await fetch('/v1/admin/report/delete', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({ token:${JSON.stringify(token)}, reportId: button.dataset.reportDelete })
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || 'Eliminazione non riuscita');
+        return;
+      }
+      location.reload();
+    });
+  });
 </script>`
   });
 }
 
 function adminBansHtml(token) {
+  const isAdministrator = isAdministratorToken(token);
   const rows = banReports.slice(-100).reverse().map(ban => `
     <tr data-ban-row data-search="${escapeHtml([ban.id, ban.reportId, ban.discordId, ban.discordTag, ban.reason].filter(Boolean).join(' ').toLowerCase())}">
       <td><code>${escapeHtml(ban.discordId || 'unknown')}</code><br><span class="muted">${escapeHtml(ban.discordTag || '')}</span></td>
@@ -1000,7 +1269,9 @@ function adminBansHtml(token) {
       <td><code>${escapeHtml(ban.publicIp || 'unknown')}</code></td>
       <td>${escapeHtml(ban.createdAt)}</td>
       <td><span class="badge ${ban.active ? 'danger' : ''}">${ban.active ? 'attivo' : 'sbloccato'}</span></td>
-      <td><button class="button" data-unban="${escapeHtml(ban.id)}">Sblocca</button></td>
+      <td>${isAdministrator
+        ? `<button class="button" data-unban="${escapeHtml(ban.id)}">Sblocca</button> <button class="button" data-ban-delete="${escapeHtml(ban.id)}">Elimina</button>`
+        : '<span class="muted">Solo Administrator</span>'}</td>
     </tr>
   `).join('');
 
@@ -1029,6 +1300,22 @@ function adminBansHtml(token) {
         headers:{'content-type':'application/json'},
         body: JSON.stringify({ token:${JSON.stringify(token)}, banId: button.dataset.unban })
       });
+      location.reload();
+    });
+  });
+  document.querySelectorAll('[data-ban-delete]').forEach(button => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Eliminare definitivamente questo ban?')) return;
+      const response = await fetch('/v1/admin/ban/delete', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({ token:${JSON.stringify(token)}, banId: button.dataset.banDelete })
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || 'Eliminazione non riuscita');
+        return;
+      }
       location.reload();
     });
   });
@@ -1144,7 +1431,27 @@ function authorize(req, payload) {
 }
 
 function isAdminToken(token) {
-  return String(token || '') === dashboardToken;
+  return canUseStaffPanel(token);
+}
+
+function isAdministratorToken(token) {
+  return canAdministrate(token);
+}
+
+function requireAdminApi(res, token) {
+  if (!isAdminToken(token)) {
+    writeJson(res, 401, { error: 'unauthorized' });
+    return null;
+  }
+  return getStaffSession(token);
+}
+
+function requireAdministratorApi(res, token) {
+  if (!isAdministratorToken(token)) {
+    writeJson(res, 403, { error: 'administrator_required' });
+    return null;
+  }
+  return getStaffSession(token);
 }
 
 function decide(event) {
@@ -1666,7 +1973,11 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/verify') {
-    writeHtml(res, 200, await verifyHtml());
+    res.writeHead(302, {
+      location: '/download#integrita',
+      'cache-control': 'no-store'
+    });
+    res.end();
     return;
   }
 
@@ -1687,6 +1998,20 @@ export const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/admin') {
     writeHtml(res, 200, adminLoginHtml());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/staff') {
+    const token = url.searchParams.get('token');
+    if (!isAdminToken(token)) {
+      writeHtml(res, 401, adminLoginHtml());
+      return;
+    }
+    if (!isAdministratorToken(token)) {
+      writeText(res, 403, 'Administrator required');
+      return;
+    }
+    writeHtml(res, 200, await adminStaffHtml(token));
     return;
   }
 
@@ -1747,13 +2072,28 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/auth/staff/start') {
+    const state = `staff:${randomUUID()}`;
+    oauthStates.set(state, { createdAt: Date.now(), kind: 'staff' });
+    if (discordOAuthConfigured) {
+      res.writeHead(302, {
+        location: discordAuthorizationUrl(state),
+        'cache-control': 'no-store'
+      });
+      res.end();
+      return;
+    }
+    writeHtml(res, 200, discordStartHtml(state));
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/auth/discord/start') {
     const state = String(url.searchParams.get('state') || '');
     if (!state) {
       writeText(res, 400, 'Missing state');
       return;
     }
-    oauthStates.set(state, { createdAt: Date.now() });
+    oauthStates.set(state, { createdAt: Date.now(), kind: 'agent' });
     if (discordOAuthConfigured) {
       res.writeHead(302, {
         location: discordAuthorizationUrl(state),
@@ -1782,6 +2122,10 @@ export const server = http.createServer(async (req, res) => {
     try {
       oauthStates.delete(state);
       const linked = await completeDiscordOAuth(code, state);
+      if (pending.kind === 'staff') {
+        writeHtml(res, 200, staffLoginResultHtml(await handleStaffDiscordLogin(linked)));
+        return;
+      }
       writeHtml(res, 200, discordCompleteHtml(linked.discordId));
     } catch (error) {
       writeText(res, 502, `Discord OAuth non completato: ${error.message}`);
@@ -1797,11 +2141,18 @@ export const server = http.createServer(async (req, res) => {
       writeText(res, 400, 'Missing state or Discord ID');
       return;
     }
-    discordLinks.set(state, {
+    const pending = oauthStates.get(state);
+    const linked = {
       discordId,
       username,
       linkedAt: new Date().toISOString()
-    });
+    };
+    discordLinks.set(state, linked);
+    if (pending?.kind === 'staff') {
+      oauthStates.delete(state);
+      writeHtml(res, 200, staffLoginResultHtml(await handleStaffDiscordLogin(linked)));
+      return;
+    }
     writeHtml(res, 200, discordCompleteHtml(discordId));
     return;
   }
@@ -1835,28 +2186,19 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/admin/reports/list') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdminApi(res, payload.token)) return;
     writeJson(res, 200, { reports: agentReports.filter(isReportSuspicious).slice(-100) });
     return;
   }
 
   if (url.pathname === '/v1/admin/bans/list') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdminApi(res, payload.token)) return;
     writeJson(res, 200, { bans: banReports.slice(-100) });
     return;
   }
 
   if (url.pathname === '/v1/admin/sessions/list') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdminApi(res, payload.token)) return;
     const now = Date.now();
     writeJson(res, 200, {
       sessions: [...agentSessions.values()].map(session => ({
@@ -1875,10 +2217,7 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/admin/unban') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdministratorApi(res, payload.token)) return;
     const ban = banReports.find(item => item.id === payload.banId);
     if (ban) {
       ban.active = false;
@@ -1889,10 +2228,7 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/admin/download/upload') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdministratorApi(res, payload.token)) return;
     const result = await saveDownloadBuild(payload);
     if (!result.ok) {
       writeJson(res, result.status || 400, { error: result.error || 'upload_failed' });
@@ -1903,10 +2239,7 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/admin/report/review') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    if (!requireAdminApi(res, payload.token)) return;
     const report = agentReports.find(item => item.id === payload.reportId);
     if (!report) {
       writeJson(res, 404, { error: 'report_not_found' });
@@ -1919,11 +2252,20 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === '/v1/admin/ban') {
-    if (!isAdminToken(payload.token)) {
-      writeJson(res, 401, { error: 'unauthorized' });
+  if (url.pathname === '/v1/admin/report/delete') {
+    if (!requireAdministratorApi(res, payload.token)) return;
+    const index = agentReports.findIndex(item => item.id === payload.reportId);
+    if (index === -1) {
+      writeJson(res, 404, { error: 'report_not_found' });
       return;
     }
+    agentReports.splice(index, 1);
+    writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/v1/admin/ban') {
+    if (!requireAdminApi(res, payload.token)) return;
     const report = agentReports.find(item => item.id === payload.reportId);
     if (!report) {
       writeJson(res, 404, { error: 'report_not_found' });
@@ -1942,6 +2284,64 @@ export const server = http.createServer(async (req, res) => {
       discordId: report.discordId
     }, 'manual_admin_ban');
     writeJson(res, 200, { ok: true, ban });
+    return;
+  }
+
+  if (url.pathname === '/v1/admin/ban/delete') {
+    if (!requireAdministratorApi(res, payload.token)) return;
+    const index = banReports.findIndex(item => item.id === payload.banId);
+    if (index === -1) {
+      writeJson(res, 404, { error: 'ban_not_found' });
+      return;
+    }
+    banReports.splice(index, 1);
+    writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/v1/admin/staff/update') {
+    const actor = requireAdministratorApi(res, payload.token);
+    if (!actor) return;
+    const discordId = normalizeDiscordId(payload.discordId);
+    const action = String(payload.action || '');
+    const role = String(payload.role || 'Admin') === 'Administrator' ? 'Administrator' : 'Admin';
+    const store = await readStaffStore();
+    const account = store.accounts?.[discordId];
+    if (!account) {
+      writeJson(res, 404, { error: 'staff_account_not_found' });
+      return;
+    }
+
+    if (action === 'remove') {
+      const adminCount = Object.values(store.accounts || {}).filter(item => item.status === 'approved' && item.role === 'Administrator').length;
+      if (account.role === 'Administrator' && adminCount <= 1) {
+        writeJson(res, 400, { error: 'cannot_remove_last_administrator' });
+        return;
+      }
+      delete store.accounts[discordId];
+      await writeStaffStore(store);
+      writeJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (action === 'reject') {
+      account.status = 'rejected';
+      account.role = null;
+      account.rejectedAt = new Date().toISOString();
+      account.rejectedBy = actor.discordId;
+    } else if (action === 'approve') {
+      account.status = 'approved';
+      account.role = role;
+      account.approvedAt = new Date().toISOString();
+      account.approvedBy = actor.discordId;
+    } else {
+      writeJson(res, 400, { error: 'invalid_staff_action' });
+      return;
+    }
+
+    store.accounts[discordId] = account;
+    await writeStaffStore(store);
+    writeJson(res, 200, { ok: true, account });
     return;
   }
 
