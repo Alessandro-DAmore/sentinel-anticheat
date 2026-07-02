@@ -26,8 +26,14 @@ if (-not (Test-Path -LiteralPath $IconPng)) {
   throw "Icon PNG not found: $IconPng"
 }
 
-Copy-Item -LiteralPath $IconPng -Destination (Join-Path $assets 'sentinel-logo-source.png') -Force
-Copy-Item -LiteralPath $IconPng -Destination (Join-Path $cloudAssets 'sentinel-logo-source.png') -Force
+$desktopSourceLogo = Join-Path $assets 'sentinel-logo-source.png'
+$cloudSourceLogo = Join-Path $cloudAssets 'sentinel-logo-source.png'
+if ([IO.Path]::GetFullPath($IconPng) -ne [IO.Path]::GetFullPath($desktopSourceLogo)) {
+  Copy-Item -LiteralPath $IconPng -Destination $desktopSourceLogo -Force
+}
+if ([IO.Path]::GetFullPath($IconPng) -ne [IO.Path]::GetFullPath($cloudSourceLogo)) {
+  Copy-Item -LiteralPath $IconPng -Destination $cloudSourceLogo -Force
+}
 
 $python = Get-Command python -ErrorAction Stop
 $pythonCode = @'
@@ -97,6 +103,10 @@ namespace SentinelAnticheatBootstrapper
                 Extract("sentinel-logo.png", Path.Combine(assets, "sentinel-logo.png"));
                 Extract("sentinel-app-icon.ico", Path.Combine(assets, "sentinel-app-icon.ico"));
 
+                string installedLauncher = Path.Combine(root, "Sentinel Anticheat.exe");
+                InstallLauncherCopy(installedLauncher);
+                CreateDesktopShortcut(installedLauncher, Path.Combine(assets, "sentinel-app-icon.ico"));
+
                 string powerShell = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.System),
                     "WindowsPowerShell\\v1.0\\powershell.exe"
@@ -141,6 +151,50 @@ namespace SentinelAnticheatBootstrapper
                 {
                     input.CopyTo(output);
                 }
+            }
+        }
+
+        private static void InstallLauncherCopy(string destination)
+        {
+            try
+            {
+                string current = Assembly.GetExecutingAssembly().Location;
+                if (string.Equals(current, destination, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                File.Copy(current, destination, true);
+            }
+            catch
+            {
+                // The app can still run even if the installed launcher copy cannot be refreshed.
+            }
+        }
+
+        private static void CreateDesktopShortcut(string targetPath, string iconPath)
+        {
+            try
+            {
+                string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string shortcutPath = Path.Combine(desktop, "Sentinel Anticheat.lnk");
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                if (shellType == null)
+                {
+                    return;
+                }
+
+                dynamic shell = Activator.CreateInstance(shellType);
+                dynamic shortcut = shell.CreateShortcut(shortcutPath);
+                shortcut.TargetPath = targetPath;
+                shortcut.WorkingDirectory = Path.GetDirectoryName(targetPath);
+                shortcut.IconLocation = iconPath;
+                shortcut.Description = "Sentinel Anticheat";
+                shortcut.Save();
+            }
+            catch
+            {
+                // Shortcut creation is a convenience and must not block Sentinel startup.
             }
         }
     }
@@ -236,6 +290,7 @@ foreach ($item in $builds) {
     ('/platform:{0}' -f $item.Platform),
     ('/win32icon:{0}' -f $iconIco),
     ('/win32manifest:{0}' -f $manifestPath),
+    '/reference:Microsoft.CSharp.dll',
     '/reference:System.Windows.Forms.dll',
     ('/out:{0}' -f $downloadExe),
     $sourcePath,
