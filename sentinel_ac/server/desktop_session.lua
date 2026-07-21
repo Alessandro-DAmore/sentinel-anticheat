@@ -34,7 +34,11 @@ local function discordIdFor(source)
 end
 
 local function desktopSessionMessage(reason)
-  if reason == 'desktop_anticheat_not_active' or reason == 'session_not_found' or reason == 'desktop_anticheat_heartbeat_expired' then
+  if reason == 'desktop_anticheat_closed' or reason == 'desktop_anticheat_heartbeat_expired' then
+    return Config.DesktopSession.kickMessage
+  end
+
+  if reason == 'desktop_anticheat_not_active' or reason == 'session_not_found' then
     return Config.DesktopSession.notActiveMessage or Config.DesktopSession.kickMessage
   end
 
@@ -46,7 +50,7 @@ local function desktopSessionMessage(reason)
 end
 
 local function canGraceInactive(source, reason)
-  if reason ~= 'desktop_anticheat_not_active' and reason ~= 'session_not_found' and reason ~= 'desktop_anticheat_heartbeat_expired' then
+  if reason ~= 'desktop_anticheat_not_active' and reason ~= 'session_not_found' then
     return false
   end
 
