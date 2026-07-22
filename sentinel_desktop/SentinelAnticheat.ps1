@@ -920,155 +920,6 @@ function Set-RoundedControlRegion {
   $path.Dispose()
 }
 
-if (-not ('SentinelAnticheat.Ui.RoundButton' -as [type])) {
-  Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Drawing') -TypeDefinition @'
-using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Windows.Forms;
-
-namespace SentinelAnticheat.Ui
-{
-    public class RoundButton : Control
-    {
-        private bool hovered;
-        private bool pressed;
-
-        public int BorderRadius { get; set; }
-        public Color BorderColor { get; set; }
-        public Color HoverBackColor { get; set; }
-        public Color PressedBackColor { get; set; }
-
-        public RoundButton()
-        {
-            SetStyle(
-                ControlStyles.AllPaintingInWmPaint |
-                ControlStyles.UserPaint |
-                ControlStyles.OptimizedDoubleBuffer |
-                ControlStyles.ResizeRedraw |
-                ControlStyles.SupportsTransparentBackColor,
-                true
-            );
-            BorderRadius = 18;
-            BorderColor = Color.FromArgb(110, 53, 103, 145);
-            HoverBackColor = Color.FromArgb(0, 138, 229);
-            PressedBackColor = Color.FromArgb(0, 90, 155);
-            BackColor = Color.FromArgb(44, 65, 84);
-            ForeColor = Color.White;
-            Cursor = Cursors.Hand;
-        }
-
-        protected override void OnPaintBackground(PaintEventArgs e)
-        {
-            if (Parent == null)
-            {
-                base.OnPaintBackground(e);
-                return;
-            }
-
-            GraphicsState state = e.Graphics.Save();
-            e.Graphics.TranslateTransform(-Left, -Top);
-            Rectangle parentClip = new Rectangle(Left, Top, Width, Height);
-            using (PaintEventArgs parentArgs = new PaintEventArgs(e.Graphics, parentClip))
-            {
-                InvokePaintBackground(Parent, parentArgs);
-                InvokePaint(Parent, parentArgs);
-            }
-            e.Graphics.Restore(state);
-        }
-
-        protected override void OnMouseEnter(EventArgs e)
-        {
-            hovered = true;
-            Invalidate();
-            base.OnMouseEnter(e);
-        }
-
-        protected override void OnMouseLeave(EventArgs e)
-        {
-            hovered = false;
-            pressed = false;
-            Invalidate();
-            base.OnMouseLeave(e);
-        }
-
-        protected override void OnMouseDown(MouseEventArgs e)
-        {
-            if (e.Button == MouseButtons.Left)
-            {
-                pressed = true;
-                Invalidate();
-            }
-            base.OnMouseDown(e);
-        }
-
-        protected override void OnMouseUp(MouseEventArgs e)
-        {
-            pressed = false;
-            Invalidate();
-            base.OnMouseUp(e);
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (GraphicsPath path = RoundedPath(rect, BorderRadius))
-            {
-                Color fill = BackColor;
-                if (Enabled && pressed)
-                {
-                    fill = PressedBackColor;
-                }
-                else if (Enabled && hovered)
-                {
-                    fill = HoverBackColor;
-                }
-
-                using (LinearGradientBrush brush = new LinearGradientBrush(rect, fill, Darken(fill), 90f))
-                using (Pen border = new Pen(BorderColor, 1f))
-                {
-                    e.Graphics.FillPath(brush, path);
-                    e.Graphics.DrawPath(border, path);
-                }
-            }
-
-            TextRenderer.DrawText(
-                e.Graphics,
-                Text,
-                Font,
-                ClientRectangle,
-                ForeColor,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
-            );
-        }
-
-        private static Color Darken(Color color)
-        {
-            return Color.FromArgb(
-                color.A,
-                Math.Max(0, color.R - 22),
-                Math.Max(0, color.G - 22),
-                Math.Max(0, color.B - 22)
-            );
-        }
-
-        private static GraphicsPath RoundedPath(Rectangle rect, int radius)
-        {
-            int diameter = Math.Max(2, radius * 2);
-            GraphicsPath path = new GraphicsPath();
-            path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
-            path.AddArc(rect.Right - diameter, rect.Y, diameter, diameter, 270, 90);
-            path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
-            path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
-            path.CloseFigure();
-            return path;
-        }
-    }
-}
-'@
-}
-
 function New-SentinelPanel {
   param(
     [int]$X,
@@ -1397,20 +1248,110 @@ $discordStatus.TextAlign = 'MiddleLeft'
 $discordStatus.BackColor = [System.Drawing.Color]::Transparent
 $hero.Controls.Add($discordStatus)
 
-$connect = New-Object SentinelAnticheat.Ui.RoundButton
-$connect.Text = 'Connetti'
-$connect.Font = New-UiFont -Names @('Segoe UI Variable Text', 'Bahnschrift', 'Segoe UI') -Size 13 -Style ([System.Drawing.FontStyle]::Bold)
-$connect.Location = New-Object System.Drawing.Point(812, 190)
-$connect.Size = New-Object System.Drawing.Size(190, 60)
-$connect.BackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
-$connect.ForeColor = [System.Drawing.Color]::White
-$connect.BorderRadius = 18
-$connect.BorderColor = [System.Drawing.Color]::FromArgb(110, 53, 103, 145)
-$connect.HoverBackColor = [System.Drawing.Color]::FromArgb(0, 138, 229)
-$connect.PressedBackColor = [System.Drawing.Color]::FromArgb(0, 90, 155)
-$connect.Cursor = [System.Windows.Forms.Cursors]::Hand
-$connect.Enabled = $true
-$hero.Controls.Add($connect)
+$Script:ConnectButtonRect = New-Object System.Drawing.Rectangle(812, 190, 190, 60)
+$Script:ConnectButtonText = 'Connetti'
+$Script:ConnectButtonFont = New-UiFont -Names @('Segoe UI Variable Text', 'Bahnschrift', 'Segoe UI') -Size 13 -Style ([System.Drawing.FontStyle]::Bold)
+$Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
+$Script:ConnectButtonBorderColor = [System.Drawing.Color]::FromArgb(110, 53, 103, 145)
+$Script:ConnectButtonHoverColor = [System.Drawing.Color]::FromArgb(0, 138, 229)
+$Script:ConnectButtonPressedColor = [System.Drawing.Color]::FromArgb(0, 90, 155)
+$Script:ConnectButtonCursor = [System.Windows.Forms.Cursors]::Hand
+$Script:ConnectButtonEnabled = $true
+$Script:ConnectButtonHovered = $false
+$Script:ConnectButtonPressed = $false
+
+$hero.Add_Paint({
+  param($sender, $event)
+
+  $g = $event.Graphics
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $rect = $Script:ConnectButtonRect
+  $buttonPath = New-RoundedRectanglePath -Rectangle $rect -Radius 18
+
+  $fill = $Script:ConnectButtonBackColor
+  if ($Script:ConnectButtonEnabled -and $Script:ConnectButtonPressed) {
+    $fill = $Script:ConnectButtonPressedColor
+  } elseif ($Script:ConnectButtonEnabled -and $Script:ConnectButtonHovered -and $Script:ConnectButtonText -ne 'Verifica...') {
+    $fill = $Script:ConnectButtonHoverColor
+  }
+
+  $endFill = [System.Drawing.Color]::FromArgb(
+    $fill.A,
+    [Math]::Max(0, $fill.R - 24),
+    [Math]::Max(0, $fill.G - 24),
+    [Math]::Max(0, $fill.B - 24)
+  )
+  $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $fill, $endFill, 90)
+  $border = New-Object System.Drawing.Pen($Script:ConnectButtonBorderColor, 1)
+  $g.FillPath($brush, $buttonPath)
+  $g.DrawPath($border, $buttonPath)
+
+  $textFlags = [System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor `
+    [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor `
+    [System.Windows.Forms.TextFormatFlags]::EndEllipsis
+  [System.Windows.Forms.TextRenderer]::DrawText(
+    $g,
+    $Script:ConnectButtonText,
+    $Script:ConnectButtonFont,
+    $rect,
+    [System.Drawing.Color]::White,
+    $textFlags
+  )
+
+  $border.Dispose()
+  $brush.Dispose()
+  $buttonPath.Dispose()
+})
+
+$hero.Add_MouseMove({
+  param($sender, $event)
+
+  $inside = $Script:ConnectButtonRect.Contains($event.Location)
+  if ($Script:ConnectButtonHovered -ne $inside) {
+    $Script:ConnectButtonHovered = $inside
+    $sender.Invalidate($Script:ConnectButtonRect)
+  }
+
+  if ($inside -and $Script:ConnectButtonEnabled) {
+    $sender.Cursor = $Script:ConnectButtonCursor
+  } else {
+    $sender.Cursor = [System.Windows.Forms.Cursors]::Default
+  }
+})
+
+$hero.Add_MouseLeave({
+  param($sender, $event)
+  if ($Script:ConnectButtonHovered -or $Script:ConnectButtonPressed) {
+    $Script:ConnectButtonHovered = $false
+    $Script:ConnectButtonPressed = $false
+    $sender.Cursor = [System.Windows.Forms.Cursors]::Default
+    $sender.Invalidate($Script:ConnectButtonRect)
+  }
+})
+
+$hero.Add_MouseDown({
+  param($sender, $event)
+  if ($event.Button -eq [System.Windows.Forms.MouseButtons]::Left -and
+      $Script:ConnectButtonEnabled -and
+      $Script:ConnectButtonRect.Contains($event.Location)) {
+    $Script:ConnectButtonPressed = $true
+    $sender.Invalidate($Script:ConnectButtonRect)
+  }
+})
+
+$hero.Add_MouseUp({
+  param($sender, $event)
+  $wasPressed = $Script:ConnectButtonPressed
+  $inside = $Script:ConnectButtonRect.Contains($event.Location)
+  if ($Script:ConnectButtonPressed) {
+    $Script:ConnectButtonPressed = $false
+    $sender.Invalidate($Script:ConnectButtonRect)
+  }
+
+  if ($wasPressed -and $inside -and $Script:ConnectButtonEnabled) {
+    Invoke-ConnectAction
+  }
+})
 
 $hero.Controls.Add((New-UiLabel -Text 'READY CHECK' -X 812 -Y 150 -Width 190 -Height 24 -Size 8.5 `
   -Color ([System.Drawing.Color]::FromArgb(125, 181, 224)) `
@@ -1582,25 +1523,32 @@ $Script:MonitorActive = $false
 $Script:RuntimeAlertSent = $false
 $Script:RuntimeBaselineProcessIds = @{}
 
+function Request-ConnectButtonPaint {
+  if ($hero -and $Script:ConnectButtonRect) {
+    $hero.Invalidate($Script:ConnectButtonRect)
+  }
+}
+
 function Set-ConnectReady {
   $ready = (-not [string]::IsNullOrWhiteSpace($Script:DiscordId)) -and $consent.Checked
   $busy = $null -ne $Script:ScanProcess -and -not $Script:ScanProcess.HasExited
-  $connect.Enabled = $true
+  $Script:ConnectButtonEnabled = $true
   if ($busy) {
-    $connect.Text = 'Verifica...'
-    $connect.BackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
-    $connect.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    $Script:ConnectButtonText = 'Verifica...'
+    $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
+    $Script:ConnectButtonCursor = [System.Windows.Forms.Cursors]::WaitCursor
+    Request-ConnectButtonPaint
     return
   }
 
-  $connect.Text = 'Connetti'
-  $connect.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $Script:ConnectButtonText = 'Connetti'
+  $Script:ConnectButtonCursor = [System.Windows.Forms.Cursors]::Hand
   if ($ready) {
-    $connect.BackColor = [System.Drawing.Color]::FromArgb(0, 127, 214)
+    $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(0, 127, 214)
     $sessionTileValue.Text = 'PRONTO'
     $sessionTileValue.ForeColor = [System.Drawing.Color]::FromArgb(255, 209, 102)
   } else {
-    $connect.BackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
+    $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
     $sessionTileValue.Text = if ([string]::IsNullOrWhiteSpace($Script:DiscordId)) { 'IN ATTESA' } else { 'CONSENSO RICHIESTO' }
     $sessionTileValue.ForeColor = [System.Drawing.Color]::FromArgb(238, 245, 252)
   }
@@ -1612,6 +1560,8 @@ function Set-ConnectReady {
     $discordTileValue.Text = 'COLLEGATO'
     $discordTileValue.ForeColor = [System.Drawing.Color]::FromArgb(80, 224, 145)
   }
+
+  Request-ConnectButtonPaint
 }
 
 function Get-FinalScanMessage {
@@ -2045,7 +1995,7 @@ $scanTimer.Add_Tick({
   $Script:ScanProcess = $null
 })
 
-$connect.Add_Click({
+function Invoke-ConnectAction {
   if (-not $consent.Checked) {
     [System.Windows.Forms.MessageBox]::Show('Devi autorizzare la verifica locale per procedere.', 'Sentinel Anticheat') | Out-Null
     return
@@ -2067,10 +2017,11 @@ $connect.Add_Click({
   $Script:LastProgressLine = 0
 
   $logBox.Clear()
-  $connect.Enabled = $true
-  $connect.Text = 'Verifica...'
-  $connect.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-  $connect.BackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
+  $Script:ConnectButtonEnabled = $true
+  $Script:ConnectButtonText = 'Verifica...'
+  $Script:ConnectButtonCursor = [System.Windows.Forms.Cursors]::WaitCursor
+  $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
+  Request-ConnectButtonPaint
   $sessionTileValue.Text = 'SCANSIONE'
   $sessionTileValue.ForeColor = [System.Drawing.Color]::FromArgb(0, 149, 255)
   $runtimeTileValue.Text = 'CHECK FILE'
@@ -2099,7 +2050,7 @@ $connect.Add_Click({
   $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
   $Script:ScanProcess = [System.Diagnostics.Process]::Start($startInfo)
   $scanTimer.Start()
-})
+}
 
 $form.Add_FormClosing({
   $heartbeatTimer.Stop()
