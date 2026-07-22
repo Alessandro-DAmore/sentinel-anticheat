@@ -10,6 +10,8 @@
   "policyUrl": "http://127.0.0.1:8787/policy",
   "cryptoMode": "zero_knowledge_v2",
   "reportPublicKeyEndpoint": "/v1/agent/crypto/public-key",
+  "selfUpdateEnabled": true,
+  "updateManifestUrl": "/download/manifest.json",
   "signatureUpdateEnabled": true,
   "banPrecheckEnabled": true,
   "autoLaunchFiveM": true,

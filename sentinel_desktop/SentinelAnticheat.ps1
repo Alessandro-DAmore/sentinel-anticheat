@@ -21,6 +21,7 @@ $Script:IconPath = Join-Path $Script:Root 'assets\sentinel-app-icon.ico'
 $Script:LogsPath = Join-Path $Script:Root 'logs'
 $Script:ReportsPath = Join-Path $Script:Root 'reports'
 $Script:ConsentBlockPath = Join-Path $Script:Root 'consent-block.json'
+$Script:UpdateStatePath = Join-Path $Script:Root 'update-state.json'
 
 function Read-JsonFile {
   param([Parameter(Mandatory = $true)][string]$Path)
@@ -225,6 +226,24 @@ function Invoke-SentinelJson {
     }
   }
   throw $lastError
+}
+
+function Get-SentinelAbsoluteUrl {
+  param(
+    [Parameter(Mandatory = $true)][string]$Value,
+    [Parameter(Mandatory = $true)]$Config
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return ''
+  }
+
+  if ($Value.StartsWith('http://', [System.StringComparison]::OrdinalIgnoreCase) -or
+      $Value.StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $Value
+  }
+
+  return ($Config.cloudEndpoint.TrimEnd('/') + '/' + $Value.TrimStart('/'))
 }
 
 function Send-SentinelSessionHeartbeat {
@@ -1728,6 +1747,97 @@ $Script:SessionPublicIp = ''
 $Script:MonitorActive = $false
 $Script:RuntimeAlertSent = $false
 $Script:RuntimeBaselineProcessIds = @{}
+$Script:UpdateInstalled = $false
+
+function Get-SentinelManifestBuild {
+  param(
+    $Manifest,
+    [Parameter(Mandatory = $true)][string]$Platform
+  )
+
+  if ($null -eq $Manifest -or -not ($Manifest.PSObject.Properties.Name -contains 'builds')) {
+    return $null
+  }
+
+  $builds = $Manifest.builds
+  if ($null -eq $builds -or -not ($builds.PSObject.Properties.Name -contains $Platform)) {
+    return $null
+  }
+
+  return $builds.$Platform
+}
+
+function Get-SentinelPlatform {
+  if ([Environment]::Is64BitOperatingSystem) {
+    return 'x64'
+  }
+
+  return 'x86'
+}
+
+function Invoke-SentinelSelfUpdate {
+  $enabled = Get-ConfigValue -Config $config -Name 'selfUpdateEnabled' -Default $true
+  if ($enabled -eq $false -or ([string]$enabled).ToLowerInvariant() -eq 'false') {
+    return
+  }
+
+  $launcherPath = Join-Path $Script:Root 'Sentinel Anticheat.exe'
+  if (-not (Test-Path -LiteralPath $launcherPath)) {
+    return
+  }
+
+  try {
+    Write-UiLog 'Controllo aggiornamenti Sentinel...'
+    $manifestUrl = Get-SentinelAbsoluteUrl -Value ([string](Get-ConfigValue -Config $config -Name 'updateManifestUrl' -Default '/download/manifest.json')) -Config $config
+    $manifest = Invoke-RestMethod -Uri $manifestUrl -Method Get -UseBasicParsing -TimeoutSec 8 -DisableKeepAlive
+    $platform = Get-SentinelPlatform
+    $build = Get-SentinelManifestBuild -Manifest $manifest -Platform $platform
+    if ($null -eq $build) {
+      Write-UiLog 'Aggiornamenti non disponibili per questa piattaforma.'
+      return
+    }
+
+    $expectedHash = ([string](Get-ConfigValue -Config $build -Name 'sha256' -Default '')).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+      Write-UiLog 'Manifest aggiornamenti senza hash: controllo saltato.'
+      return
+    }
+
+    $currentHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $launcherPath).Hash.ToLowerInvariant()
+    if ($currentHash -eq $expectedHash) {
+      Write-UiLog 'Sentinel e'' gia aggiornato.'
+      return
+    }
+
+    $downloadUrl = [string](Get-ConfigValue -Config $build -Name 'publicUrl' -Default '')
+    if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
+      $downloadUrl = Get-SentinelAbsoluteUrl -Value ([string](Get-ConfigValue -Config $build -Name 'route' -Default '')) -Config $config
+    }
+
+    if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
+      Write-UiLog 'URL aggiornamento non disponibile.'
+      return
+    }
+
+    $tempExe = Join-Path $Script:Root ('Sentinel Anticheat.update.{0}.exe' -f ([guid]::NewGuid().ToString('N')))
+    Invoke-WebRequest -Uri $downloadUrl -UseBasicParsing -OutFile $tempExe -TimeoutSec 60
+    $downloadedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempExe).Hash.ToLowerInvariant()
+    if ($downloadedHash -ne $expectedHash) {
+      Remove-Item -LiteralPath $tempExe -Force -ErrorAction SilentlyContinue
+      Write-UiLog 'Aggiornamento scaricato ma hash non valido: ignorato.'
+      return
+    }
+
+    Copy-Item -LiteralPath $tempExe -Destination $launcherPath -Force
+    Remove-Item -LiteralPath $tempExe -Force -ErrorAction SilentlyContinue
+    $Script:UpdateInstalled = $true
+    $message = 'Aggiornamento Sentinel installato. Chiudi e riapri Sentinel Anticheat per applicarlo.'
+    Write-UiLog $message
+    [System.Windows.Forms.MessageBox]::Show($message, 'Sentinel Anticheat') | Out-Null
+  } catch {
+    Write-UiLog ('Auto-update non riuscito: {0}' -f $_.Exception.Message)
+  }
+}
 
 function Request-ConnectButtonPaint {
   if ($hero -and $Script:ConnectButtonRect) {
@@ -1739,6 +1849,16 @@ function Set-ConnectReady {
   $ready = (-not [string]::IsNullOrWhiteSpace($Script:DiscordId)) -and $consent.Checked
   $busy = $null -ne $Script:ScanProcess -and -not $Script:ScanProcess.HasExited
   $Script:ConnectButtonEnabled = $true
+  if ($Script:UpdateInstalled) {
+    $Script:ConnectButtonText = 'Riapri app'
+    $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(0, 127, 214)
+    $Script:ConnectButtonCursor = [System.Windows.Forms.Cursors]::Hand
+    $sessionTileValue.Text = 'UPDATE'
+    $sessionTileValue.ForeColor = [System.Drawing.Color]::FromArgb(255, 209, 102)
+    Request-ConnectButtonPaint
+    return
+  }
+
   if ($busy) {
     $Script:ConnectButtonText = 'Verifica...'
     $Script:ConnectButtonBackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
@@ -2369,6 +2489,13 @@ function Show-SentinelPolicyConsent {
 }
 
 function Invoke-ConnectAction {
+  if ($Script:UpdateInstalled) {
+    $message = 'Aggiornamento Sentinel installato. Chiudi e riapri Sentinel Anticheat per usare la versione nuova.'
+    Write-UiLog $message
+    [System.Windows.Forms.MessageBox]::Show($message, 'Sentinel Anticheat') | Out-Null
+    return
+  }
+
   if (-not $consent.Checked) {
     [System.Windows.Forms.MessageBox]::Show('Devi autorizzare la verifica locale per procedere.', 'Sentinel Anticheat') | Out-Null
     return
@@ -2455,5 +2582,6 @@ $form.Add_FormClosing({
   }
 })
 
+Invoke-SentinelSelfUpdate
 Set-ConnectReady
 [void]$form.ShowDialog()

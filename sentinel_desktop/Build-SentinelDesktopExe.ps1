@@ -14,6 +14,7 @@ $assets = Join-Path $root 'assets'
 $build = Join-Path $root 'build'
 $downloads = Join-Path $projectRoot 'sentinel_cloud_mock\downloads'
 $cloudAssets = Join-Path $projectRoot 'sentinel_cloud_mock\assets'
+$downloadManifestPath = Join-Path $projectRoot 'sentinel_cloud_mock\data\download-manifest.json'
 $outputs = 'C:\Users\Utente\Documents\Codex\2026-07-01\ie\outputs'
 $iconPngOut = Join-Path $assets 'sentinel-logo.png'
 $iconIco = Join-Path $assets 'sentinel-app-icon.ico'
@@ -22,7 +23,7 @@ $sourcePath = Join-Path $build 'SentinelAnticheatLauncher.cs'
 $assemblyInfoPath = Join-Path $build 'AssemblyInfo.cs'
 $manifestPath = Join-Path $build 'SentinelAnticheat.exe.manifest'
 
-New-Item -ItemType Directory -Force -Path $assets, $build, $downloads, $cloudAssets, $outputs | Out-Null
+New-Item -ItemType Directory -Force -Path $assets, $build, $downloads, $cloudAssets, (Split-Path -Parent $downloadManifestPath), $outputs | Out-Null
 
 if (-not (Test-Path -LiteralPath $IconPng)) {
   throw "Icon PNG not found: $IconPng"
@@ -285,6 +286,7 @@ $builds = @(
   @{ Platform = 'x64'; FileName = 'SentinelAnticheat-Windows-x64.exe' },
   @{ Platform = 'x86'; FileName = 'SentinelAnticheat-Windows-x86.exe' }
 )
+$downloadManifestBuilds = [ordered]@{}
 
 foreach ($item in $builds) {
   $downloadExe = Join-Path $downloads $item.FileName
@@ -328,7 +330,31 @@ foreach ($item in $builds) {
   $friendlyName = if ($item.Platform -eq 'x64') { 'Sentinel Anticheat.exe' } else { 'Sentinel Anticheat 32 bit.exe' }
   Copy-Item -LiteralPath $downloadExe -Destination (Join-Path $downloads $friendlyName) -Force
   Copy-Item -LiteralPath $downloadExe -Destination (Join-Path $outputs $friendlyName) -Force
+
+  $fileItem = Get-Item -LiteralPath $downloadExe
+  $downloadManifestBuilds[$item.Platform] = [ordered]@{
+    platform = $item.Platform
+    label = if ($item.Platform -eq 'x64') { 'Windows 64 bit' } else { 'Windows 32 bit' }
+    filename = $item.FileName
+    downloadName = $friendlyName
+    route = if ($item.Platform -eq 'x64') { '/download/windows-x64' } else { '/download/windows-x86' }
+    storage = 'local'
+    objectKey = 'downloads/' + $item.FileName
+    publicUrl = $null
+    sizeBytes = $fileItem.Length
+    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloadExe).Hash.ToLowerInvariant()
+    uploadedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
 }
+
+$downloadManifest = [ordered]@{
+  version = 1
+  generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  storage = 'local'
+  builds = $downloadManifestBuilds
+}
+$downloadManifestRaw = ($downloadManifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine
+[System.IO.File]::WriteAllText($downloadManifestPath, $downloadManifestRaw, [System.Text.UTF8Encoding]::new($false))
 
 Get-Item -LiteralPath (Join-Path $downloads 'SentinelAnticheat-Windows-x64.exe'), (Join-Path $downloads 'SentinelAnticheat-Windows-x86.exe'), (Join-Path $downloads 'Sentinel Anticheat.exe'), (Join-Path $downloads 'Sentinel Anticheat 32 bit.exe'), (Join-Path $outputs 'SentinelAnticheat-Windows-x64.exe'), (Join-Path $outputs 'SentinelAnticheat-Windows-x86.exe'), (Join-Path $outputs 'Sentinel Anticheat.exe'), (Join-Path $outputs 'Sentinel Anticheat 32 bit.exe') |
   Select-Object FullName, Length, LastWriteTime

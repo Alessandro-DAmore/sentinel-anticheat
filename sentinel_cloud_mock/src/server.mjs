@@ -457,15 +457,16 @@ function localDownloadBuilds(manifest = {}) {
     const filePath = path.join(downloadsDir, build.filename);
     const exists = fs.existsSync(filePath);
     const stat = exists ? fs.statSync(filePath) : null;
-    const publicUrl = cloudPublicUrl(build.filename);
+    const localSha256 = exists && !cloudStorageEnabled ? sha256Hex(fs.readFileSync(filePath)) : null;
+    const publicUrl = cloudPublicUrl(build.filename) || manifestBuild.publicUrl || null;
     return {
       ...build,
-      available: Boolean(manifestBuild.uploadedAt || exists),
+      available: cloudStorageEnabled ? Boolean(manifestBuild.uploadedAt || publicUrl) : exists,
       storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
       publicUrl,
-      sha256: manifestBuild.sha256 || null,
-      sizeBytes: manifestBuild.sizeBytes || stat?.size || 0,
-      updatedAt: manifestBuild.uploadedAt || stat?.mtime.toISOString() || null
+      sha256: localSha256 || manifestBuild.sha256 || null,
+      sizeBytes: cloudStorageEnabled ? (manifestBuild.sizeBytes || 0) : (stat?.size || manifestBuild.sizeBytes || 0),
+      updatedAt: cloudStorageEnabled ? (manifestBuild.uploadedAt || null) : (stat?.mtime.toISOString() || manifestBuild.uploadedAt || null)
     };
   });
 }
@@ -500,7 +501,7 @@ function emptyDownloadManifest() {
 function readLocalDownloadManifest() {
   try {
     return fs.existsSync(downloadManifestPath)
-      ? JSON.parse(fs.readFileSync(downloadManifestPath, 'utf8'))
+      ? JSON.parse(fs.readFileSync(downloadManifestPath, 'utf8').replace(/^\uFEFF/, ''))
       : emptyDownloadManifest();
   } catch {
     return emptyDownloadManifest();
@@ -547,6 +548,22 @@ async function writeDownloadManifest(manifest) {
 
 async function downloadBuilds() {
   return localDownloadBuilds(await readDownloadManifest());
+}
+
+async function publicDownloadManifest() {
+  const builds = await downloadBuilds();
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    storage: cloudStorageEnabled ? 'Cloudflare R2' : 'local',
+    builds: Object.fromEntries(builds.map(build => [
+      build.platform,
+      {
+        ...build,
+        objectKey: downloadObjectKey(build.filename)
+      }
+    ]))
+  };
 }
 
 function emptyStaffStore() {
@@ -2622,7 +2639,7 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/download/manifest.json') {
-    writeJson(res, 200, await readDownloadManifest());
+    writeJson(res, 200, await publicDownloadManifest());
     return;
   }
 
