@@ -151,3 +151,39 @@ sentinel_test_enforce_kick
 
 This requires `set sentinel_test_allow_enforce true` and temporarily enforces one money exploit detection before returning the resource to monitor mode.
 
+## Sentinel Demo Mode
+
+Use this for a safe owner demo. It does not spawn vehicles, enable noclip, revive players, inject DLLs, or modify FiveM. It only emits Sentinel-specific demo signals so the real runtime monitor and server guards can prove they react after the player is already in game.
+
+Build the demo tool:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\sentinel_desktop\Build-SentinelDemoMode.ps1"
+```
+
+Demo flow:
+
+1. Start the cloud mock, FXServer, and Sentinel desktop app.
+2. Open Sentinel, link Discord, click `Connetti`, and join the local FXServer.
+3. Start:
+
+```powershell
+& "E:\Sentinel_Anticheat\sentinel_desktop\tools\Sentinel Demo Mode.exe"
+```
+
+4. Do not press anything yet. The app should stay clean because no runtime marker is active. Launch it from the project `tools` folder, not from `Downloads` or `%TEMP%`, otherwise the unsigned runtime-process rule may correctly flag it as a new user-writable executable.
+5. Press `Spawn Sultan`, `Noclip`, `Goto Player`, `TPM`, or `Revive`.
+6. Within the runtime interval, Sentinel should create a runtime report and, in enforce mode, disconnect the player.
+
+Optional in-game server-side demo commands from F8:
+
+```cfg
+sentinel_demo_spawn_sultan
+sentinel_demo_noclip
+sentinel_demo_goto
+sentinel_demo_tpm
+sentinel_demo_revive
+```
+
+Run these from a non-admin player when you want to demonstrate blocked admin-style actions. In `Config.Product.mode = 'monitor'`, Sentinel logs what it would do; in `enforce`, the configured punishment is applied. For a presentation where you want a kick instead of a persistent ban, temporarily set `Config.Punishments.admin_abuse = 'kick'`.
+

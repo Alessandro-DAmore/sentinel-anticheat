@@ -58,6 +58,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\s
 
 Windows SmartScreen trust is based on publisher signature and reputation. A local unsigned `.exe` can still show the blue "Esegui comunque" warning even when it is safe. For production, buy a real Code Signing certificate, sign every build, timestamp the signature, and submit false positives to Microsoft Security Intelligence if Defender flags a clean release.
 
+## Build Sentinel Demo Mode
+
+This optional demo tool is for owner presentations and local validation. It starts clean and only emits a runtime signal after pressing a simulated action button.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\sentinel_desktop\Build-SentinelDemoMode.ps1"
+```
+
+Run:
+
+```powershell
+& "E:\Sentinel_Anticheat\sentinel_desktop\tools\Sentinel Demo Mode.exe"
+```
+
+The tool is intentionally harmless: it does not modify FiveM, spawn vehicles, enable noclip, inject modules, or grant player actions.
+
 ## Production rules
 
 - Replace the shared secret with asymmetric encryption before real customers.

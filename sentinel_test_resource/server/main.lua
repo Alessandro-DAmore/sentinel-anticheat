@@ -20,6 +20,58 @@ local function runSmoke(target, context)
   print(('[Sentinel Test] AuthorizeAdminAction allowed=%s action=give_item'):format(tostring(adminAllowed)))
 end
 
+local demoActions = {
+  spawn_sultan = {
+    guard = 'admin',
+    action = 'spawn_vehicle',
+    context = 'sentinel_demo:spawn_sultan'
+  },
+  noclip = {
+    guard = 'admin',
+    action = 'noclip',
+    context = 'sentinel_demo:noclip'
+  },
+  goto = {
+    guard = 'admin',
+    action = 'teleport',
+    context = 'sentinel_demo:goto'
+  },
+  tpm = {
+    guard = 'admin',
+    action = 'teleport',
+    context = 'sentinel_demo:tpm'
+  },
+  revive = {
+    guard = 'admin',
+    action = 'revive',
+    context = 'sentinel_demo:revive'
+  }
+}
+
+local function runDemoAction(source, action)
+  action = tostring(action or '')
+  local demo = demoActions[action]
+  if not demo then
+    print(('[Sentinel Demo] unknown action from %s: %s'):format(source, action))
+    return true
+  end
+
+  local eventAllowed = exports.sentinel_ac:InspectEvent(source, 'sentinel_demo:' .. action)
+  if not eventAllowed then
+    print(('[Sentinel Demo] event blocked source=%s action=%s'):format(source, action))
+    return false
+  end
+
+  local allowed = exports.sentinel_ac:AuthorizeAdminAction(source, demo.action, demo.context)
+  print(('[Sentinel Demo] action=%s guard=%s allowed=%s'):format(
+    action,
+    demo.action,
+    tostring(allowed)
+  ))
+
+  return allowed
+end
+
 RegisterCommand('sentinel_test_money', function(source, args)
   if not requireConsole(source) then
     return
@@ -110,6 +162,13 @@ RegisterNetEvent('sentinel_test:enforce_kick', function()
     tostring(ok),
     tostring(message)
   ))
+end)
+
+RegisterNetEvent('sentinel_demo:action', function(action)
+  local allowed = runDemoAction(source, action)
+  if not allowed then
+    CancelEvent()
+  end
 end)
 
 CreateThread(function()

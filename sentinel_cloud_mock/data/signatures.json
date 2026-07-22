@@ -7,7 +7,13 @@
   "knownBadSha256": [
   ],
   "runtimeMarkers": [
-    "sentinel_runtime_probe"
+    "sentinel_runtime_probe",
+    "sentinel_demo_cheat_action",
+    "sentinel_demo_spawn_sultan",
+    "sentinel_demo_noclip",
+    "sentinel_demo_goto",
+    "sentinel_demo_tpm",
+    "sentinel_demo_revive"
   ],
   "behaviorRules": {
     "trackNewProcesses": true,
