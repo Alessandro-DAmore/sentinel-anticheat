@@ -1,5 +1,6 @@
 param(
   [string]$IconPng = 'C:\Users\Utente\Desktop\69be01b5-1310-44c6-8f43-d82c5999eb5e.png',
+  [string]$PackageConfigPath = '',
   [string]$SigningPfx = '',
   [string]$SigningPassword = ''
 )
@@ -16,6 +17,7 @@ $cloudAssets = Join-Path $projectRoot 'sentinel_cloud_mock\assets'
 $outputs = 'C:\Users\Utente\Documents\Codex\2026-07-01\ie\outputs'
 $iconPngOut = Join-Path $assets 'sentinel-logo.png'
 $iconIco = Join-Path $assets 'sentinel-app-icon.ico'
+$configResourcePath = if ([string]::IsNullOrWhiteSpace($PackageConfigPath)) { Join-Path $root 'config.json' } else { [IO.Path]::GetFullPath($PackageConfigPath) }
 $sourcePath = Join-Path $build 'SentinelAnticheatLauncher.cs'
 $assemblyInfoPath = Join-Path $build 'AssemblyInfo.cs'
 $manifestPath = Join-Path $build 'SentinelAnticheat.exe.manifest'
@@ -96,7 +98,7 @@ namespace SentinelAnticheatBootstrapper
 
                 Extract("SentinelAnticheat.ps1", Path.Combine(root, "SentinelAnticheat.ps1"));
                 Extract("Run-SentinelAnticheat.ps1", Path.Combine(root, "Run-SentinelAnticheat.ps1"));
-                Extract("config.json", Path.Combine(root, "config.json"));
+                ExtractIfMissing("config.json", Path.Combine(root, "config.json"));
                 Extract("signatures.json", Path.Combine(root, "signatures.json"));
                 Extract("README.md", Path.Combine(root, "README.md"));
                 Extract("Smoke-AgentReport.ps1", Path.Combine(root, "Smoke-AgentReport.ps1"));
@@ -152,6 +154,16 @@ namespace SentinelAnticheatBootstrapper
                     input.CopyTo(output);
                 }
             }
+        }
+
+        private static void ExtractIfMissing(string resourceName, string destination)
+        {
+            if (File.Exists(destination))
+            {
+                return;
+            }
+
+            Extract(resourceName, destination);
         }
 
         private static void InstallLauncherCopy(string destination)
@@ -253,7 +265,7 @@ if (-not (Test-Path -LiteralPath $csc)) {
 $resources = @(
   @{ Path = Join-Path $root 'SentinelAnticheat.ps1'; Name = 'SentinelAnticheat.ps1' },
   @{ Path = Join-Path $root 'Run-SentinelAnticheat.ps1'; Name = 'Run-SentinelAnticheat.ps1' },
-  @{ Path = Join-Path $root 'config.json'; Name = 'config.json' },
+  @{ Path = $configResourcePath; Name = 'config.json' },
   @{ Path = Join-Path $root 'signatures.json'; Name = 'signatures.json' },
   @{ Path = Join-Path $root 'README.md'; Name = 'README.md' },
   @{ Path = Join-Path $root 'Smoke-AgentReport.ps1'; Name = 'Smoke-AgentReport.ps1' },
