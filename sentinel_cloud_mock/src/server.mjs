@@ -871,57 +871,147 @@ function siteStyle() {
       letter-spacing:.08em;
     }
     .portal-section {
-      padding:78px 0;
+      padding:86px 0 96px;
       border-top:1px solid rgba(0,153,255,.22);
+      position:relative;
+      overflow:hidden;
       background:
-        linear-gradient(180deg, rgba(3,9,16,.94), rgba(6,14,23,.96)),
-        radial-gradient(circle at 20% 10%, rgba(0,153,255,.08), transparent 28%);
+        radial-gradient(circle at 78% 28%, rgba(0,153,255,.12), transparent 30%),
+        linear-gradient(180deg, rgba(3,9,16,.98), rgba(2,7,13,.96));
     }
-    .portal-section .section-head { text-align:center; margin-inline:auto; }
-    .portal-stats {
+    .portal-section::before {
+      content:"";
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      background:
+        linear-gradient(90deg, rgba(0,153,255,.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(174,184,195,.035) 1px, transparent 1px);
+      background-size:96px 96px;
+      mask-image:linear-gradient(180deg, transparent, #000 18%, #000 80%, transparent);
+      opacity:.55;
+    }
+    .operating-grid {
       display:grid;
-      grid-template-columns:repeat(4,minmax(0,1fr));
-      gap:12px;
-      margin-top:28px;
+      grid-template-columns:minmax(0,.92fr) minmax(420px,1.08fr);
+      gap:54px;
+      align-items:center;
+      position:relative;
+      z-index:1;
     }
-    .portal-stat {
-      border:1px solid rgba(47,83,111,.86);
-      background:linear-gradient(180deg, rgba(12,25,38,.92), rgba(3,9,16,.86));
-      min-height:132px;
+    .operating-copy h2 {
+      max-width:640px;
+      margin:12px 0 0;
+      font-size:clamp(34px, 5vw, 68px);
+      line-height:.94;
+      letter-spacing:-.02em;
+    }
+    .operating-copy p {
+      max-width:560px;
+      margin-top:20px;
+      color:#aebdcb;
+      font-size:16px;
+    }
+    .signal-row {
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:10px;
+      margin-top:30px;
+    }
+    .signal-pill {
+      border:1px solid rgba(58,104,142,.74);
+      background:linear-gradient(180deg, rgba(9,24,39,.76), rgba(4,12,20,.68));
+      padding:16px 14px;
+      min-height:86px;
+      clip-path:polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+    }
+    .signal-pill b {
+      display:block;
+      color:#f5f9fd;
+      font-size:17px;
+      line-height:1;
+    }
+    .signal-pill span {
+      display:block;
+      margin-top:9px;
+      color:#8ea5b7;
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+    }
+    .command-panel {
+      border:1px solid rgba(57,111,151,.78);
+      background:
+        linear-gradient(180deg, rgba(9,22,36,.94), rgba(3,9,16,.9)),
+        radial-gradient(circle at 100% 0, rgba(0,153,255,.18), transparent 42%);
+      padding:26px 28px 28px;
+      box-shadow:0 34px 90px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.04);
+      clip-path:polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+    }
+    .command-topline {
+      display:flex;
+      justify-content:space-between;
+      gap:16px;
+      color:#86cfff;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+      font-size:12px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+    }
+    .command-steps {
+      list-style:none;
+      margin:24px 0 0;
+      padding:0;
+      display:grid;
+      gap:0;
+    }
+    .command-steps li {
+      display:grid;
+      grid-template-columns:46px 1fr;
+      gap:16px;
+      padding:18px 0;
+      border-top:1px solid rgba(64,107,141,.42);
+    }
+    .step-index {
+      width:34px;
+      height:34px;
       display:grid;
       place-items:center;
-      text-align:center;
-      padding:18px;
-      clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+      color:#07131f;
+      background:linear-gradient(135deg, #dce7f0, #0099ff);
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+      font-size:12px;
+      font-weight:900;
+      clip-path:polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
     }
-    .portal-stat b { display:block; color:#f3f8fd; font-size:26px; line-height:1; margin-bottom:8px; }
-    .portal-stat span { color:#91a8ba; text-transform:uppercase; letter-spacing:.12em; font-size:12px; }
-    .feature-band {
-      display:grid;
-      grid-template-columns:repeat(3,1fr);
-      gap:14px;
+    .command-steps b { display:block; color:#f4f8fc; font-size:16px; }
+    .command-steps p { margin:6px 0 0; color:#94a9ba; font-size:13px; }
+    .review-line {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
       margin-top:26px;
     }
-    .feature-band .card {
-      min-height:190px;
-      display:flex;
-      flex-direction:column;
-      justify-content:flex-end;
-      border-radius:0;
-      clip-path:polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
-      background:
-        linear-gradient(180deg, rgba(13,26,39,.96), rgba(3,9,16,.96)),
-        radial-gradient(circle at 50% 0, rgba(0,153,255,.14), transparent 40%);
+    .review-chip {
+      border:1px solid rgba(0,153,255,.32);
+      background:rgba(0,153,255,.08);
+      color:#cfe7f9;
+      padding:9px 12px;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+      font-size:11px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.1em;
     }
     .login-portal { min-height:calc(100vh - 76px); }
     .login-title { font-size:clamp(52px, 9vw, 116px); }
     .login-title span { letter-spacing:.28em; margin-left:.28em; }
     @media (max-width:840px) {
-      .hero-grid, .grid3, .split, .metric-row { grid-template-columns:1fr; }
+      .hero-grid, .grid3, .split, .metric-row, .operating-grid, .signal-row { grid-template-columns:1fr; }
       .links { flex-wrap:wrap; justify-content:flex-end; }
       .nav { height:auto; padding:12px 0; align-items:flex-start; }
       .finding { grid-template-columns:1fr; }
-      .portal-stats, .feature-band { grid-template-columns:1fr; }
       .portal-title span { letter-spacing:.28em; margin-left:.28em; }
       .portal-subtitle { letter-spacing:.06em; }
     }
@@ -972,45 +1062,31 @@ function homeHtml() {
     </div>
   </div>
 </main>
-<section class="portal-section">
-  <div class="wrap">
-    <div class="portal-stats">
-      <div class="portal-stat"><b>Live</b><span>Heartbeat client</span></div>
-      <div class="portal-stat"><b>PDF</b><span>Report staff</span></div>
-      <div class="portal-stat"><b>Discord</b><span>Identity link</span></div>
-      <div class="portal-stat"><b>FiveM</b><span>Server guard</span></div>
-    </div>
-  </div>
-</section>
-<section class="portal-section">
-  <div class="wrap">
-    <div class="section-head">
+<section id="operation" class="portal-section portal-operating">
+  <div class="wrap operating-grid">
+    <div class="operating-copy">
       <div class="eyebrow">Sistema anticheat</div>
-      <h2>Controllo locale, decisioni server-side, report chiari.</h2>
-      <p>Sentinel separa i dati sensibili dal lavoro dello staff: il client invia report cifrati e l'admin vede solo informazioni utili alla revisione.</p>
+      <h2>Un controllo pulito. Una sessione live. Zero rumore inutile.</h2>
+      <p>Sentinel collega Discord, verifica il client, mantiene heartbeat verso FiveM e genera report solo quando c'e' qualcosa da controllare davvero.</p>
+      <div class="signal-row">
+        <div class="signal-pill"><b>Live</b><span>heartbeat client</span></div>
+        <div class="signal-pill"><b>PDF</b><span>report forensics</span></div>
+        <div class="signal-pill"><b>FiveM</b><span>server guard</span></div>
+      </div>
+      <div class="review-line">
+        <span class="review-chip">Discord identity</span>
+        <span class="review-chip">Runtime monitor</span>
+        <span class="review-chip">Ban review</span>
+      </div>
     </div>
-    <div class="feature-band">
-      <article class="card"><div class="num">01</div><h3>Discord-first</h3><p>Ogni report lega il controllo al Discord ID del player, cosi lo staff sa chi deve verificare.</p></article>
-      <article class="card"><div class="num">02</div><h3>Sessione obbligatoria</h3><p>Il resource FiveM verifica che il client Sentinel resti aperto; se la sessione sparisce, il player viene espulso.</p></article>
-      <article class="card"><div class="num">03</div><h3>Runtime guard</h3><p>Dopo il controllo iniziale, Sentinel continua a monitorare segnali sospetti mentre il player e' in gioco.</p></article>
-      <article class="card"><div class="num">04</div><h3>Report cybersecurity</h3><p>Lo staff riceve severita, motivazione, path normalizzato, hash e dati tecnici in un PDF ordinato.</p></article>
-      <article class="card"><div class="num">05</div><h3>Privacy by design</h3><p>I file personali non vengono caricati: Sentinel registra metadati, hash e indicatori necessari alla revisione.</p></article>
-      <article class="card"><div class="num">06</div><h3>Ban review</h3><p>Gli admin possono cercare report, consultare ban e gestire eventuali errori direttamente dal pannello.</p></article>
-    </div>
-  </div>
-</section>
-<section class="portal-section">
-  <div class="wrap split">
-    <div>
-      <div class="eyebrow">Flow operativo</div>
-      <h2>Dal click su Connetti alla verifica in server.</h2>
-      <p>Il client non e' solo una finestra: diventa una sessione autorizzata che il server FiveM controlla a intervalli regolari.</p>
-    </div>
-    <div class="timeline">
-      <div><b>Login Discord</b><br>Il player collega l'account prima della connessione.</div>
-      <div><b>Scan locale</b><br>Processi, servizi, driver e percorsi sensibili vengono verificati.</div>
-      <div><b>Sessione cloud</b><br>Il server riceve heartbeat e stato live del client.</div>
-      <div><b>Report admin</b><br>Solo se c'e' un sospetto viene generato un report consultabile.</div>
+    <div class="command-panel">
+      <div class="command-topline"><span>Sentinel flow</span><span>client > server</span></div>
+      <ol class="command-steps">
+        <li><span class="step-index">01</span><div><b>Login Discord</b><p>Il player collega l'identita prima della connessione.</p></div></li>
+        <li><span class="step-index">02</span><div><b>Check locale</b><p>Processi, servizi, driver e percorsi sensibili vengono verificati.</p></div></li>
+        <li><span class="step-index">03</span><div><b>Sessione live</b><p>Il server controlla heartbeat e stato del client mentre il player e' online.</p></div></li>
+        <li><span class="step-index">04</span><div><b>Report mirato</b><p>Se c'e' un segnale sospetto, lo staff riceve solo i dati utili alla revisione.</p></div></li>
+      </ol>
     </div>
   </div>
 </section>`
