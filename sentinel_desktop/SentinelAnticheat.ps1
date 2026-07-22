@@ -21,7 +21,6 @@ $Script:IconPath = Join-Path $Script:Root 'assets\sentinel-app-icon.ico'
 $Script:LogsPath = Join-Path $Script:Root 'logs'
 $Script:ReportsPath = Join-Path $Script:Root 'reports'
 $Script:ConsentBlockPath = Join-Path $Script:Root 'consent-block.json'
-$Script:UpdateStatePath = Join-Path $Script:Root 'update-state.json'
 
 function Read-JsonFile {
   param([Parameter(Mandatory = $true)][string]$Path)
