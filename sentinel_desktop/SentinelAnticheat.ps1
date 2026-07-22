@@ -920,6 +920,155 @@ function Set-RoundedControlRegion {
   $path.Dispose()
 }
 
+if (-not ('SentinelAnticheat.Ui.RoundButton' -as [type])) {
+  Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Drawing') -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Windows.Forms;
+
+namespace SentinelAnticheat.Ui
+{
+    public class RoundButton : Control
+    {
+        private bool hovered;
+        private bool pressed;
+
+        public int BorderRadius { get; set; }
+        public Color BorderColor { get; set; }
+        public Color HoverBackColor { get; set; }
+        public Color PressedBackColor { get; set; }
+
+        public RoundButton()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.UserPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.SupportsTransparentBackColor,
+                true
+            );
+            BorderRadius = 18;
+            BorderColor = Color.FromArgb(110, 53, 103, 145);
+            HoverBackColor = Color.FromArgb(0, 138, 229);
+            PressedBackColor = Color.FromArgb(0, 90, 155);
+            BackColor = Color.FromArgb(44, 65, 84);
+            ForeColor = Color.White;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            if (Parent == null)
+            {
+                base.OnPaintBackground(e);
+                return;
+            }
+
+            GraphicsState state = e.Graphics.Save();
+            e.Graphics.TranslateTransform(-Left, -Top);
+            Rectangle parentClip = new Rectangle(Left, Top, Width, Height);
+            using (PaintEventArgs parentArgs = new PaintEventArgs(e.Graphics, parentClip))
+            {
+                InvokePaintBackground(Parent, parentArgs);
+                InvokePaint(Parent, parentArgs);
+            }
+            e.Graphics.Restore(state);
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            pressed = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                pressed = true;
+                Invalidate();
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            pressed = false;
+            Invalidate();
+            base.OnMouseUp(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            using (GraphicsPath path = RoundedPath(rect, BorderRadius))
+            {
+                Color fill = BackColor;
+                if (Enabled && pressed)
+                {
+                    fill = PressedBackColor;
+                }
+                else if (Enabled && hovered)
+                {
+                    fill = HoverBackColor;
+                }
+
+                using (LinearGradientBrush brush = new LinearGradientBrush(rect, fill, Darken(fill), 90f))
+                using (Pen border = new Pen(BorderColor, 1f))
+                {
+                    e.Graphics.FillPath(brush, path);
+                    e.Graphics.DrawPath(border, path);
+                }
+            }
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                Text,
+                Font,
+                ClientRectangle,
+                ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
+            );
+        }
+
+        private static Color Darken(Color color)
+        {
+            return Color.FromArgb(
+                color.A,
+                Math.Max(0, color.R - 22),
+                Math.Max(0, color.G - 22),
+                Math.Max(0, color.B - 22)
+            );
+        }
+
+        private static GraphicsPath RoundedPath(Rectangle rect, int radius)
+        {
+            int diameter = Math.Max(2, radius * 2);
+            GraphicsPath path = new GraphicsPath();
+            path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
+            path.AddArc(rect.Right - diameter, rect.Y, diameter, diameter, 270, 90);
+            path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
+            path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+    }
+}
+'@
+}
+
 function New-SentinelPanel {
   param(
     [int]$X,
@@ -1248,21 +1397,20 @@ $discordStatus.TextAlign = 'MiddleLeft'
 $discordStatus.BackColor = [System.Drawing.Color]::Transparent
 $hero.Controls.Add($discordStatus)
 
-$connect = New-Object System.Windows.Forms.Button
+$connect = New-Object SentinelAnticheat.Ui.RoundButton
 $connect.Text = 'Connetti'
 $connect.Font = New-UiFont -Names @('Segoe UI Variable Text', 'Bahnschrift', 'Segoe UI') -Size 13 -Style ([System.Drawing.FontStyle]::Bold)
 $connect.Location = New-Object System.Drawing.Point(812, 190)
 $connect.Size = New-Object System.Drawing.Size(190, 60)
 $connect.BackColor = [System.Drawing.Color]::FromArgb(44, 65, 84)
 $connect.ForeColor = [System.Drawing.Color]::White
-$connect.FlatStyle = 'Flat'
-$connect.FlatAppearance.BorderSize = 0
-$connect.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0, 138, 229)
-$connect.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0, 90, 155)
+$connect.BorderRadius = 18
+$connect.BorderColor = [System.Drawing.Color]::FromArgb(110, 53, 103, 145)
+$connect.HoverBackColor = [System.Drawing.Color]::FromArgb(0, 138, 229)
+$connect.PressedBackColor = [System.Drawing.Color]::FromArgb(0, 90, 155)
 $connect.Cursor = [System.Windows.Forms.Cursors]::Hand
 $connect.Enabled = $true
 $hero.Controls.Add($connect)
-Set-RoundedControlRegion -Control $connect -Radius 18
 
 $hero.Controls.Add((New-UiLabel -Text 'READY CHECK' -X 812 -Y 150 -Width 190 -Height 24 -Size 8.5 `
   -Color ([System.Drawing.Color]::FromArgb(125, 181, 224)) `
