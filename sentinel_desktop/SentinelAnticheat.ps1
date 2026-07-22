@@ -405,6 +405,73 @@ function Test-PathMatchesAny {
   return $false
 }
 
+function Test-ActionableSuspiciousFileName {
+  param(
+    [string]$Path,
+    [string]$Extension,
+    [string]$Term
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Term)) {
+    return $false
+  }
+
+  $extension = ([string]$Extension).ToLowerInvariant()
+  $termLower = ([string]$Term).ToLowerInvariant()
+
+  $directlyExecutableExtensions = @(
+    '.exe',
+    '.dll',
+    '.sys',
+    '.asi',
+    '.scr',
+    '.com',
+    '.jar',
+    '.bat',
+    '.cmd',
+    '.ps1',
+    '.bin',
+    '.dat'
+  )
+
+  if ($directlyExecutableExtensions -contains $extension) {
+    return $true
+  }
+
+  $sensitiveScriptPaths = @(
+    '\FiveM\FiveM.app\plugins\',
+    '\CitizenFX\',
+    '\Rockstar Games\Grand Theft Auto V\plugins\'
+  )
+
+  if (@('.lua', '.js') -contains $extension -and (Test-PathMatchesAny -Path $Path -Patterns $sensitiveScriptPaths)) {
+    return $true
+  }
+
+  $highSignalTerms = @(
+    'eulen',
+    'redengine',
+    'lynx',
+    'hammafia',
+    'tzproject',
+    'skript',
+    'dopamine',
+    'fallout',
+    'desudo',
+    'hxcheats',
+    'fivem cheat',
+    'fivem mod menu',
+    'modmenu',
+    'aimbot',
+    'triggerbot',
+    'silent aim',
+    'wallhack',
+    'hwid spoofer'
+  )
+
+  return @($highSignalTerms) -contains $termLower
+}
+
 function Get-AuthenticodeSignatureSafe {
   param([string]$Path)
 
@@ -701,7 +768,7 @@ function Start-SentinelScan {
           continue
         }
 
-        if ($nameTerm) {
+        if ($nameTerm -and (Test-ActionableSuspiciousFileName -Path $item.FullName -Extension $extension -Term $nameTerm)) {
           Add-Finding -Findings $findings -Type 'file' -Severity 'high' -Signal $nameTerm -Reason 'Suspicious file name or path' -Path $item.FullName -Sha256 $hash -Size $item.Length
           continue
         }
