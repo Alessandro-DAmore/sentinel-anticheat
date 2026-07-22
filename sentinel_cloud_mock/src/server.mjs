@@ -702,7 +702,7 @@ function siteStyle() {
     }
     * { box-sizing:border-box; }
     html { scroll-behavior:smooth; }
-    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 SentinelUI, Bahnschrift, "Segoe UI", system-ui, sans-serif; }
+    body { margin:0; overflow-x:hidden; background:var(--bg); color:var(--text); font:15px/1.55 SentinelUI, Bahnschrift, "Segoe UI", system-ui, sans-serif; }
     body::before {
       content:""; position:fixed; inset:0; pointer-events:none; opacity:.45;
       background-image:
@@ -731,7 +731,7 @@ function siteStyle() {
     .eyebrow { color:var(--accent); text-transform:uppercase; font-weight:800; letter-spacing:.18em; font-size:12px; }
     h1 { font-size:clamp(44px, 6.2vw, 82px); line-height:.96; margin:14px 0 18px; letter-spacing:0; }
     h2 { font-size:30px; margin:0 0 10px; letter-spacing:0; }
-    p { color:var(--muted); margin:0; }
+    p { color:var(--muted); margin:0; overflow-wrap:break-word; }
     .hero-copy { font-size:18px; max-width:690px; color:#b8c9d8; }
     .actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
     .metric-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:28px; max-width:720px; }
@@ -756,6 +756,151 @@ function siteStyle() {
     .card h3 { margin:0 0 8px; font-size:18px; }
     .card .num { color:var(--accent); font-size:13px; letter-spacing:.14em; font-weight:800; margin-bottom:10px; }
     .download-grid, .admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .download-page {
+      padding:72px 0 82px;
+      border-top:1px solid rgba(99,143,177,.2);
+      background:
+        radial-gradient(circle at 78% 16%, rgba(0,153,255,.1), transparent 34%),
+        linear-gradient(180deg, rgba(3,9,16,.98), rgba(2,7,13,.96));
+    }
+    .download-hero {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(300px,.48fr);
+      gap:38px;
+      align-items:end;
+      padding-bottom:30px;
+      border-bottom:1px solid rgba(63,105,139,.45);
+    }
+    .download-hero h1 {
+      max-width:760px;
+      margin-bottom:16px;
+    }
+    .download-hero .hero-copy {
+      max-width:760px;
+      font-size:16px;
+    }
+    .download-meta {
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+      gap:10px;
+    }
+    .download-meta span {
+      border:1px solid rgba(0,153,255,.32);
+      background:rgba(0,153,255,.07);
+      color:#cfe7f9;
+      padding:9px 12px;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+      font-size:11px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+    }
+    .release-list {
+      display:grid;
+      gap:12px;
+      margin-top:26px;
+    }
+    .release-item {
+      min-width:0;
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:20px;
+      align-items:center;
+      border:1px solid rgba(55,95,128,.74);
+      background:linear-gradient(180deg, rgba(9,22,35,.86), rgba(4,11,18,.8));
+      padding:22px;
+      clip-path:polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+    }
+    .release-item.primary-release {
+      border-color:rgba(0,153,255,.72);
+      background:
+        radial-gradient(circle at 100% 0, rgba(0,153,255,.18), transparent 42%),
+        linear-gradient(180deg, rgba(10,29,46,.94), rgba(4,12,20,.88));
+      box-shadow:0 28px 72px rgba(0,0,0,.25);
+    }
+    .release-main h2 {
+      margin:8px 0 8px;
+      font-size:clamp(24px, 3vw, 38px);
+      overflow-wrap:break-word;
+    }
+    .release-label {
+      color:var(--accent);
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+      font-size:11px;
+      font-weight:900;
+      text-transform:uppercase;
+      letter-spacing:.16em;
+    }
+    .release-description {
+      max-width:680px;
+      min-width:0;
+      color:#aebdcb;
+      overflow-wrap:break-word;
+    }
+    .release-meta-line {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:14px;
+      color:#8ea5b7;
+      font-size:12px;
+    }
+    .release-meta-line span {
+      border-left:2px solid rgba(0,153,255,.55);
+      padding-left:10px;
+    }
+    .release-actions {
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      flex-wrap:wrap;
+      gap:10px;
+      min-width:260px;
+    }
+    .hash-detail {
+      width:100%;
+      color:#aebdcb;
+      font-size:12px;
+    }
+    .hash-detail summary {
+      cursor:pointer;
+      color:#d7e8f6;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      list-style:none;
+    }
+    .hash-detail summary::-webkit-details-marker { display:none; }
+    .hash-detail code {
+      display:block;
+      margin-top:10px;
+      padding:10px;
+      border:1px solid rgba(63,105,139,.45);
+      background:rgba(2,7,13,.72);
+    }
+    .trust-strip {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:12px;
+      margin-top:16px;
+    }
+    .trust-item {
+      min-width:0;
+      border:1px solid rgba(55,95,128,.58);
+      background:rgba(5,14,23,.62);
+      padding:18px;
+      clip-path:polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+    }
+    .trust-item h3 {
+      margin:6px 0 8px;
+      font-size:18px;
+    }
+    .trust-item code {
+      display:block;
+      margin-top:10px;
+      font-size:12px;
+    }
     input { width:100%; border:1px solid var(--line); border-radius:10px; background:#050a10; color:var(--text); padding:13px; margin:6px 0 12px; font:inherit; }
     label { color:#c7d6e4; font-weight:650; font-size:12px; }
     table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
@@ -1008,12 +1153,17 @@ function siteStyle() {
     .login-title { font-size:clamp(52px, 9vw, 116px); }
     .login-title span { letter-spacing:.28em; margin-left:.28em; }
     @media (max-width:840px) {
-      .hero-grid, .grid3, .split, .metric-row, .operating-grid, .signal-row { grid-template-columns:1fr; }
-      .links { flex-wrap:wrap; justify-content:flex-end; }
-      .nav { height:auto; padding:12px 0; align-items:flex-start; }
+      .hero-grid, .grid3, .split, .metric-row, .operating-grid, .signal-row, .download-hero, .release-item, .trust-strip { grid-template-columns:1fr; }
+      .wrap { width:min(1200px, calc(100% - 32px)); }
+      .links { width:100%; flex-wrap:wrap; justify-content:flex-start; gap:8px; }
+      .links a, .button { min-height:38px; padding:9px 12px; }
+      .nav { height:auto; padding:12px 0; align-items:flex-start; justify-content:flex-start; flex-wrap:wrap; }
+      .brand { min-width:0; }
       .finding { grid-template-columns:1fr; }
       .portal-title span { letter-spacing:.28em; margin-left:.28em; }
       .portal-subtitle { letter-spacing:.06em; }
+      .download-meta, .release-actions { justify-content:flex-start; }
+      .release-actions { min-width:0; }
     }
   </style>`;
 }
@@ -1095,49 +1245,63 @@ function homeHtml() {
 
 async function downloadHtml() {
   const builds = await downloadBuilds();
-  const buildCards = builds.map(build => `
-      <article class="panel">
-        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start">
-          <div>
-            <h2>${escapeHtml(build.label)}</h2>
-            <p>${build.platform === 'x64'
-              ? "Consigliato per la maggior parte dei PC moderni. Scarica direttamente l'app Sentinel Anticheat con icona ufficiale."
-              : "Compatibilita legacy per PC piu vecchi. Scarica direttamente l'eseguibile Windows."}</p>
+  const buildCards = builds.map(build => {
+    const isPrimary = build.platform === 'x64';
+    const description = isPrimary
+      ? "Versione consigliata per la maggior parte dei PC moderni. Scarica l'app ufficiale Sentinel Anticheat con icona e configurazione aggiornata."
+      : "Versione legacy per sistemi Windows piu vecchi. Usala solo se il tuo PC non supporta la build 64 bit.";
+    return `
+      <article class="release-item ${isPrimary ? 'primary-release' : ''}">
+        <div class="release-main">
+          <div class="release-label">${isPrimary ? 'Recommended build' : 'Legacy build'}</div>
+          <h2>${escapeHtml(build.label)}</h2>
+          <p class="release-description">${description}</p>
+          <div class="release-meta-line">
+            <span>${build.available ? 'Disponibile' : 'Da caricare'}</span>
+            ${build.available ? `<span>${formatBytes(build.sizeBytes || 0)}</span><span>${escapeHtml(build.storage)}</span>` : ''}
           </div>
-          <span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'Disponibile' : 'Da caricare'}</span>
+          ${build.sha256 ? `<details class="hash-detail"><summary>Mostra SHA256</summary><code>${escapeHtml(build.sha256)}</code></details>` : ''}
         </div>
-        <p class="muted" style="margin-top:14px">${build.available
-          ? `File: ${escapeHtml(build.downloadName)}${build.sizeBytes ? ` - ${formatBytes(build.sizeBytes)}` : ''} - Storage: ${escapeHtml(build.storage)}`
-          : 'La build non e ancora presente sul server online.'}</p>
-        ${build.sha256 ? `<p class="muted" style="margin-top:10px">SHA256</p><code>${escapeHtml(build.sha256)}</code>` : ''}
-        <div class="actions">
+        <div class="release-actions">
           ${build.available
-            ? `<a class="button ${build.platform === 'x64' ? 'primary' : ''}" href="${build.route}">Scarica app ${build.platform === 'x64' ? '64 bit' : '32 bit'}</a>`
+            ? `<a class="button ${isPrimary ? 'primary' : ''}" href="${build.route}">Scarica ${isPrimary ? '64 bit' : '32 bit'}</a>`
             : '<a class="button ghost" href="/admin">Carica da Admin</a>'}
-          <a class="button ghost" href="#integrita">Verifica hash</a>
+          <span class="badge ${build.available ? '' : 'danger'}">${build.available ? 'Ready' : 'Offline'}</span>
         </div>
       </article>
-  `).join('');
+    `;
+  }).join('');
 
   return layoutPage({
     title: 'Download',
     active: 'download',
-    body: `<main class="section">
+    body: `<main class="download-page">
   <div class="wrap">
-    <div class="eyebrow">Windows client</div>
-    <h1>Scarica Sentinel Anticheat</h1>
-    <p class="hero-copy">Scarica l'app Windows ufficiale. Al primo avvio collega Discord, esegue la verifica locale e mantiene la sessione anticheat attiva durante la permanenza nel server.</p>
-    <div class="download-grid" style="margin-top:26px">${buildCards}</div>
-    <div class="panel" style="margin-top:18px">
-      <div class="eyebrow">Sicurezza download</div>
-      <h2>Firma digitale e SmartScreen</h2>
-      <p>La build locale e' pronta per essere firmata. In produzione Sentinel dovra usare un certificato Code Signing valido: e' il modo corretto per far riconoscere a Windows publisher, integrita e attendibilita dell'app.</p>
+    <div class="download-hero">
+      <div>
+        <div class="eyebrow">Windows client</div>
+        <h1>Scarica Sentinel Anticheat</h1>
+        <p class="hero-copy">Installa il client ufficiale, collega Discord e mantieni la sessione anticheat attiva mentre giochi su FiveM.</p>
+      </div>
+      <div class="download-meta">
+        <span>Cloudflare R2</span>
+        <span>Windows app</span>
+        <span>SHA256</span>
+      </div>
     </div>
-    <div class="panel" id="integrita" style="margin-top:18px">
-      <div class="eyebrow">Integrita file</div>
-      <h2>Verifica SHA256</h2>
-      <p>Per controllare un download, esegui PowerShell e confronta l'hash ottenuto con lo SHA256 ufficiale mostrato sopra.</p>
-      <code>Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\\Downloads\\Sentinel Anticheat.exe"</code>
+    <div class="release-list">${buildCards}</div>
+    <div class="trust-strip" id="integrita">
+      <article class="trust-item">
+        <div class="eyebrow">SmartScreen</div>
+        <h3>Firma digitale</h3>
+        <p>La build e' pronta per il Code Signing. Il certificato ufficiale rendera publisher e integrita riconoscibili da Windows.</p>
+      </article>
+      <article class="trust-item">
+        <div class="eyebrow">Integrita file</div>
+        <h3>Verifica SHA256</h3>
+        <p>Confronta l'hash del file scaricato con quello ufficiale prima dell'installazione.</p>
+        <code>Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\\Downloads\\Sentinel Anticheat.exe"</code>
+      </article>
     </div>
   </div>
 </main>`
