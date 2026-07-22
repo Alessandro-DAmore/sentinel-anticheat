@@ -13,6 +13,7 @@ MVP Windows desktop agent for Sentinel Anticheat.
 - Detects public IP from the Sentinel Cloud connection and local private IPs from the PC.
 - Uploads only an encrypted JSON report.
 - Sends suspicious file metadata and hashes, not raw personal files.
+- Uses zero-knowledge report envelopes for local report files and cloud uploads.
 
 ## Run
 
@@ -73,6 +74,30 @@ Run:
 ```
 
 The tool is intentionally harmless: it does not modify FiveM, spawn vehicles, enable noclip, inject modules, or grant player actions.
+
+## Zero-Knowledge Reports
+
+Sentinel encrypts each report before writing it locally or uploading it. The desktop app uses a fresh AES key per report, authenticates the ciphertext with HMAC-SHA256, then wraps the report key with the admin RSA public key. The cloud stores ciphertext and a minimal decision summary; it does not receive the readable report body.
+
+Generate local dev keys:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\sentinel_cloud_mock\scripts\Generate-ZeroKnowledgeKeys.ps1"
+```
+
+The private key is written to:
+
+```text
+E:\Sentinel_Anticheat\sentinel_cloud_mock\data\report-admin-private-key.xml
+```
+
+It is ignored by git. Do not upload it to Render or commit it.
+
+Decrypt an admin report locally:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\sentinel_desktop\Decrypt-SentinelReport.ps1" -EncryptedReportPath "C:\path\sentinel-report.sentinel-report.json" -PrivateKeyPath "E:\Sentinel_Anticheat\sentinel_cloud_mock\data\report-admin-private-key.xml"
+```
 
 ## Production rules
 

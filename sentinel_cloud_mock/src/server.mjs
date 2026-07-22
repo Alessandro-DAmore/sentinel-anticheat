@@ -20,6 +20,7 @@ const dataDir = path.join(packageRoot, 'data');
 const signaturesPath = path.join(dataDir, 'signatures.json');
 const downloadManifestPath = path.join(dataDir, 'download-manifest.json');
 const staffAccountsPath = path.join(dataDir, 'staff-accounts.json');
+const reportPublicKeyPath = path.join(dataDir, 'report-admin-public-key.xml');
 
 const host = process.env.SENTINEL_HOST || '127.0.0.1';
 const port = Number(process.env.PORT || process.env.SENTINEL_PORT || 8787);
@@ -77,6 +78,7 @@ const agentSessions = new Map();
 const discordLinks = new Map();
 const oauthStates = new Map();
 const staffSessions = new Map();
+const consentBlocks = new Map();
 
 function stableHash(input, seed = 5381) {
   let hash = seed >>> 0;
@@ -106,6 +108,19 @@ function hmacHex(input) {
 
 function sha256Hex(input) {
   return createHash('sha256').update(input).digest('hex');
+}
+
+function reportPublicKeyXml() {
+  const envKey = String(process.env.SENTINEL_REPORT_PUBLIC_KEY_XML || '').trim();
+  if (envKey) {
+    return envKey;
+  }
+
+  if (fs.existsSync(reportPublicKeyPath)) {
+    return fs.readFileSync(reportPublicKeyPath, 'utf8').trim();
+  }
+
+  return '';
 }
 
 function readSignatureFeed() {
@@ -262,6 +277,72 @@ function markSessionBlocked(payload, reason = 'suspicious_scan_blocked') {
   session.lastSeenAt = Date.now();
   session.lastHeartbeat = new Date().toISOString();
   return session;
+}
+
+function consentBlockKey({ discordId, machineFingerprint }) {
+  const normalizedDiscordId = normalizeDiscordId(discordId);
+  const machine = String(machineFingerprint || '').trim();
+  return normalizedDiscordId || machine || '';
+}
+
+function activeConsentBlockForIdentity({ discordId, machineFingerprint }) {
+  const normalizedDiscordId = normalizeDiscordId(discordId);
+  const machine = String(machineFingerprint || '').trim();
+
+  for (const block of consentBlocks.values()) {
+    if (!block.active) continue;
+    if (normalizedDiscordId && block.discordId === normalizedDiscordId) return block;
+    if (machine && block.machineFingerprint === machine) return block;
+  }
+
+  return null;
+}
+
+function consentBlockPayload(block) {
+  return {
+    blocked: Boolean(block && block.active),
+    action: block?.active ? 'blocked' : 'allow',
+    blockId: block?.id || null,
+    reason: block?.reason || null,
+    message: block?.active
+      ? 'Sentinel Anticheat: accesso bloccato per rifiuto policy. Passa in Attesa Anticheat per controllo con lo staff.'
+      : 'allowed'
+  };
+}
+
+function addConsentBlock({ discordId, discordTag, machineFingerprint, publicIp, localIps = [], reason }) {
+  const key = consentBlockKey({ discordId, machineFingerprint });
+  if (!key) {
+    return null;
+  }
+
+  const existing = [...consentBlocks.values()].find(block => block.active && (
+    (normalizeDiscordId(discordId) && block.discordId === normalizeDiscordId(discordId)) ||
+    (machineFingerprint && block.machineFingerprint === String(machineFingerprint))
+  ));
+
+  if (existing) {
+    existing.updatedAt = new Date().toISOString();
+    existing.reason = reason || existing.reason;
+    return existing;
+  }
+
+  const block = {
+    id: randomUUID(),
+    discordId: normalizeDiscordId(discordId),
+    discordTag: String(discordTag || ''),
+    machineFingerprint: String(machineFingerprint || ''),
+    publicIp: String(publicIp || ''),
+    localIps: Array.isArray(localIps) ? localIps.map(item => String(item || '')).filter(Boolean) : [],
+    reason: reason || 'consent_denied_review_required',
+    active: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    unlockedAt: null,
+    unlockedBy: null
+  };
+  consentBlocks.set(block.id, block);
+  return block;
 }
 
 function decryptEnvelope(envelope) {
@@ -1382,6 +1463,7 @@ function adminShell({ title, token, body }) {
         <a class="button primary" href="/admin/panel?token=${encodeURIComponent(token)}">Overview</a>
         <a class="button" href="/admin/reports?token=${encodeURIComponent(token)}">Report</a>
         <a class="button" href="/admin/bans?token=${encodeURIComponent(token)}">Ban</a>
+        <a class="button" href="/admin/consent?token=${encodeURIComponent(token)}">Consensi</a>
         ${staffLinks}
       </div>
       <span class="badge">${escapeHtml(staff?.role || 'Staff')}</span>
@@ -1552,13 +1634,15 @@ async function adminStaffHtml(token) {
 function reportCard(report, token) {
   const isAdministrator = isAdministratorToken(token);
   const payload = report.payload || {};
-  const summary = payload.summary || {};
+  const encrypted = report.encrypted === true;
+  const summary = encrypted ? (report.decisionSummary || {}) : (payload.summary || {});
   const identity = payload.identity || {};
   const discord = identity.discord || {};
-  const findings = Array.isArray(payload.findings) ? payload.findings : [];
+  const findings = encrypted ? [] : (Array.isArray(payload.findings) ? payload.findings : []);
   const searchText = [
     report.id,
     payload.reportId,
+    report.decisionSummary?.reportId,
     report.discordId,
     discord.id,
     report.discordTag,
@@ -1576,32 +1660,43 @@ function reportCard(report, token) {
 
   const findingCount = summary.findingCount ?? findings.length;
   const highestSeverity = summary.highestSeverity || (findings[0]?.severity ?? 'unknown');
+  const encryptedNotice = encrypted
+    ? `<div class="finding">
+      <strong>ZERO-KNOWLEDGE REPORT</strong>
+      <span>Il cloud conserva solo il report cifrato. Percorsi, IP locali, hash e dettagli file sono leggibili solo con la chiave privata admin.</span>
+      <code>${escapeHtml(report.encryptedReport?.alg || report.cryptoMode || 'zero_knowledge_v2')}</code>
+    </div>`
+    : '';
+  const downloadButton = encrypted
+    ? `<a class="button primary" href="/admin/report/${encodeURIComponent(report.id)}.sentinel-report.json?token=${encodeURIComponent(token)}">Scarica report cifrato</a>`
+    : `<a class="button primary" href="/admin/report/${encodeURIComponent(report.id)}.pdf?token=${encodeURIComponent(token)}">Scarica PDF</a>`;
 
   return `<article class="panel" data-report-card data-search="${escapeHtml(searchText)}">
     <div style="display:flex; justify-content:space-between; gap:14px; align-items:flex-start">
       <div>
         <div class="eyebrow">Cybersecurity report</div>
         <h2>${escapeHtml(String(highestSeverity).toUpperCase())}</h2>
-        <p>${escapeHtml(payload.generatedAt || report.receivedAt)}</p>
+        <p>${escapeHtml(summary.generatedAt || payload.generatedAt || report.receivedAt)}</p>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end">
         <div class="badge ${summary.suspicious ? 'danger' : ''}">${escapeHtml(findingCount)} findings</div>
         <div class="badge">${escapeHtml(report.reviewStatus || 'pending')}</div>
+        ${encrypted ? '<div class="badge">E2E encrypted</div>' : ''}
       </div>
     </div>
     <table style="margin:14px 0">
       <tbody>
-        <tr><th>Report ID</th><td><code>${escapeHtml(payload.reportId || report.id)}</code></td></tr>
-        <tr><th>Discord ID</th><td><code>${escapeHtml(discord.id || report.discordId || 'non collegato')}</code></td></tr>
-        <tr><th>Discord user</th><td>${escapeHtml(discord.username || report.discordTag || 'unknown')}</td></tr>
-        <tr><th>IP rete</th><td><code>${escapeHtml(identity.publicIp || report.publicIpSeen || 'unknown')}</code></td></tr>
-        <tr><th>IP PC</th><td><code>${escapeHtml((identity.localIps || []).join(', ') || 'none')}</code></td></tr>
-        <tr><th>Machine</th><td><code>${escapeHtml(String(identity.machineFingerprint || report.machineFingerprint || '').slice(0, 28))}</code></td></tr>
+        <tr><th>Report ID</th><td><code>${escapeHtml(summary.reportId || payload.reportId || report.id)}</code></td></tr>
+        <tr><th>Discord ID</th><td><code>${escapeHtml(encrypted ? 'cifrato nel report' : (discord.id || report.discordId || 'non collegato'))}</code></td></tr>
+        <tr><th>Discord user</th><td>${escapeHtml(encrypted ? 'cifrato nel report' : (discord.username || report.discordTag || 'unknown'))}</td></tr>
+        <tr><th>IP rete</th><td><code>${escapeHtml(encrypted ? 'cifrato nel report' : (identity.publicIp || report.publicIpSeen || 'unknown'))}</code></td></tr>
+        <tr><th>IP PC</th><td><code>${escapeHtml(encrypted ? 'cifrato nel report' : ((identity.localIps || []).join(', ') || 'none'))}</code></td></tr>
+        <tr><th>Machine</th><td><code>${escapeHtml(encrypted ? 'cifrato nel report' : String(identity.machineFingerprint || report.machineFingerprint || '').slice(0, 28))}</code></td></tr>
       </tbody>
     </table>
-    ${topFindings || '<p class="muted">Nessun file sospetto in questo report.</p>'}
+    ${encryptedNotice || topFindings || '<p class="muted">Nessun file sospetto in questo report.</p>'}
     <div class="actions">
-      <a class="button primary" href="/admin/report/${encodeURIComponent(report.id)}.pdf?token=${encodeURIComponent(token)}">Scarica PDF</a>
+      ${downloadButton}
       <button class="button" data-report-ban="${escapeHtml(report.id)}">Banna player</button>
       <button class="button" data-report-review="${escapeHtml(report.id)}" data-review-status="reviewed">Segna verificato</button>
       <button class="button" data-report-review="${escapeHtml(report.id)}" data-review-status="false_positive">Falso positivo</button>
@@ -1742,6 +1837,57 @@ function adminBansHtml(token) {
   });
 }
 
+function adminConsentHtml(token) {
+  const rows = [...consentBlocks.values()].slice(-100).reverse().map(block => `
+    <tr data-consent-row data-search="${escapeHtml([block.id, block.discordId, block.discordTag, block.machineFingerprint, block.reason].filter(Boolean).join(' ').toLowerCase())}">
+      <td><code>${escapeHtml(block.discordId || 'unknown')}</code><br><span class="muted">${escapeHtml(block.discordTag || '')}</span></td>
+      <td><code>${escapeHtml(block.id)}</code></td>
+      <td>${escapeHtml(block.reason || 'consent_denied_review_required')}</td>
+      <td><code>${escapeHtml(block.publicIp || 'unknown')}</code></td>
+      <td>${escapeHtml(block.createdAt)}</td>
+      <td><span class="badge ${block.active ? 'danger' : ''}">${block.active ? 'attesa staff' : 'sbloccato'}</span></td>
+      <td>${block.active ? `<button class="button" data-consent-unlock="${escapeHtml(block.id)}">Sblocca</button>` : '<span class="muted">Completato</span>'}</td>
+    </tr>
+  `).join('');
+
+  return adminShell({
+    title: 'Consensi',
+    token,
+    body: `<div class="eyebrow">Policy review</div>
+<h1>Blocchi consenso</h1>
+<p class="muted">Qui arrivano i player che hanno rifiutato la policy Sentinel. Dopo il controllo in Attesa Anticheat, lo staff puo sbloccare l'accesso.</p>
+<input id="consentSearch" placeholder="Cerca per Discord ID, Block ID o Machine ID" style="margin-top:18px; max-width:520px">
+<table style="margin-top:22px">
+  <thead><tr><th>Discord</th><th>Block ID</th><th>Motivo</th><th>IP rete</th><th>Data</th><th>Stato</th><th>Azione</th></tr></thead>
+  <tbody>${rows || '<tr><td colspan="7" class="muted">Nessun blocco consenso.</td></tr>'}</tbody>
+</table>
+<script>
+  const consentSearch = document.getElementById('consentSearch');
+  consentSearch?.addEventListener('input', () => {
+    const query = consentSearch.value.trim().toLowerCase();
+    document.querySelectorAll('[data-consent-row]').forEach(row => {
+      row.style.display = !query || row.dataset.search.includes(query) ? '' : 'none';
+    });
+  });
+  document.querySelectorAll('[data-consent-unlock]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const response = await fetch('/v1/admin/consent/unlock', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({ token:${JSON.stringify(token)}, blockId: button.dataset.consentUnlock })
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || 'Sblocco non riuscito');
+        return;
+      }
+      location.reload();
+    });
+  });
+</script>`
+  });
+}
+
 function discordStartHtml(state) {
   return layoutPage({
     title: 'Discord Link',
@@ -1760,6 +1906,33 @@ function discordStartHtml(state) {
       <input name="username" placeholder="utente#0001">
       <button class="button primary" type="submit">Autorizza Sentinel</button>
     </form>
+  </div>
+</main>`
+  });
+}
+
+function policyHtml() {
+  return layoutPage({
+    title: 'Policy',
+    active: 'download',
+    body: `<main class="section">
+  <div class="wrap">
+    <div class="eyebrow">Sentinel Anticheat Policy</div>
+    <h1>Privacy e verifica locale</h1>
+    <section class="panel" style="margin-top:22px">
+      <h2>Cosa controlla Sentinel</h2>
+      <p>Sentinel verifica processi attivi, servizi, driver, moduli caricati nei processi sensibili FiveM/GTA e percorsi ad alto rischio come cartelle plugin, CitizenFX, Temp e Download.</p>
+      <p>Sentinel non carica file personali. Quando trova elementi sospetti genera indicatori tecnici: hash SHA-256, dimensione, percorso normalizzato, motivo del rilevamento e severita.</p>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Crittografia zero-knowledge</h2>
+      <p>I report sono cifrati sul PC prima del salvataggio e dell'upload. Il cloud conserva il report cifrato e non possiede il contenuto leggibile del report.</p>
+      <p>La lettura completa richiede la chiave privata admin autorizzata. Senza quella chiave, un leak del database non deve permettere di leggere dettagli tecnici o dati identificativi nel report.</p>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Rifiuto consenso</h2>
+      <p>Se un player rifiuta la verifica, Sentinel non procede al controllo e blocca la connessione fino alla revisione manuale dello staff anticheat.</p>
+    </section>
   </div>
 </main>`
   });
@@ -1917,7 +2090,7 @@ function reportAction(report) {
 }
 
 function isReportSuspicious(report) {
-  return report?.payload?.summary?.suspicious === true;
+  return report?.payload?.summary?.suspicious === true || report?.decisionSummary?.suspicious === true;
 }
 
 function attachSessionIdentity(report, session) {
@@ -1947,6 +2120,49 @@ function addReportFromPayload({ decrypted, publicIp, payload, source = 'scan' })
     reviewStatus: 'pending',
     reviewNote: '',
     payload: decrypted
+  };
+
+  agentReports.push(report);
+  return report;
+}
+
+function actionFromDecisionSummary(summary) {
+  if (!summary || summary.suspicious !== true) {
+    return 'allow';
+  }
+
+  if (severityScore(summary.highestSeverity) >= 90) {
+    return 'ban';
+  }
+
+  return 'review';
+}
+
+function addEncryptedReportFromPayload({ encryptedReport, decisionSummary, publicIp, payload, source = 'scan' }) {
+  const session = payload.sessionId ? agentSessions.get(String(payload.sessionId)) : null;
+  const summary = decisionSummary || {};
+  const reportId = String(summary.reportId || randomUUID());
+  const report = {
+    id: reportId,
+    receivedAt: new Date().toISOString(),
+    source,
+    encrypted: true,
+    cryptoMode: encryptedReport?.mode || 'zero_knowledge_v2',
+    publicIpSeen: publicIp,
+    discordId: normalizeDiscordId(payload.discordId || session?.discordId),
+    discordTag: String(payload.discordTag || session?.discordTag || ''),
+    machineFingerprint: String(payload.machineFingerprint || ''),
+    reviewStatus: 'pending',
+    reviewNote: '',
+    decisionSummary: {
+      reportId,
+      generatedAt: summary.generatedAt || new Date().toISOString(),
+      suspicious: summary.suspicious === true,
+      highestSeverity: summary.highestSeverity || 'unknown',
+      findingCount: Number(summary.findingCount || 0),
+      source: summary.source || source
+    },
+    encryptedReport
   };
 
   agentReports.push(report);
@@ -2391,6 +2607,11 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/policy') {
+    writeHtml(res, 200, policyHtml());
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/verify') {
     res.writeHead(302, {
       location: '/download#integrita',
@@ -2461,12 +2682,47 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/consent') {
+    if (!isAdminToken(url.searchParams.get('token'))) {
+      writeHtml(res, 401, adminLoginHtml());
+      return;
+    }
+    writeHtml(res, 200, adminConsentHtml(url.searchParams.get('token')));
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/dashboard') {
     if (!isAdminToken(url.searchParams.get('token'))) {
       writeHtml(res, 401, adminLoginHtml());
       return;
     }
     writeHtml(res, 200, dashboardHtml(url.searchParams.get('token')));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/admin/report/') && url.pathname.endsWith('.sentinel-report.json')) {
+    if (!isAdminToken(url.searchParams.get('token'))) {
+      writeText(res, 401, 'Unauthorized');
+      return;
+    }
+    const id = decodeURIComponent(url.pathname.replace('/admin/report/', '').replace(/\.sentinel-report\.json$/, ''));
+    const report = agentReports.find(item => item.id === id);
+    if (!report || !report.encryptedReport) {
+      writeText(res, 404, 'Encrypted report not found');
+      return;
+    }
+    const body = JSON.stringify({
+      id: report.id,
+      receivedAt: report.receivedAt,
+      decisionSummary: report.decisionSummary,
+      encryptedReport: report.encryptedReport
+    }, null, 2);
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="sentinel-report-${id}.sentinel-report.json"`,
+      'cache-control': 'no-store'
+    });
+    res.end(body);
     return;
   }
 
@@ -2616,6 +2872,12 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/v1/admin/consent/list') {
+    if (!requireAdminApi(res, payload.token)) return;
+    writeJson(res, 200, { blocks: [...consentBlocks.values()].slice(-100) });
+    return;
+  }
+
   if (url.pathname === '/v1/admin/sessions/list') {
     if (!requireAdminApi(res, payload.token)) return;
     const now = Date.now();
@@ -2718,6 +2980,22 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/v1/admin/consent/unlock') {
+    const actor = requireAdminApi(res, payload.token);
+    if (!actor) return;
+    const block = consentBlocks.get(String(payload.blockId || ''));
+    if (!block) {
+      writeJson(res, 404, { error: 'consent_block_not_found' });
+      return;
+    }
+    block.active = false;
+    block.unlockedAt = new Date().toISOString();
+    block.unlockedBy = actor.discordId || actor.role || 'staff';
+    block.updatedAt = new Date().toISOString();
+    writeJson(res, 200, { ok: true, block });
+    return;
+  }
+
   if (url.pathname === '/v1/admin/staff/update') {
     const actor = requireAdministratorApi(res, payload.token);
     if (!actor) return;
@@ -2792,6 +3070,26 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/v1/agent/crypto/public-key') {
+    const publicKeyXml = reportPublicKeyXml();
+    if (!publicKeyXml) {
+      writeJson(res, 503, {
+        ok: false,
+        error: 'report_public_key_not_configured'
+      });
+      return;
+    }
+
+    writeJson(res, 200, {
+      ok: true,
+      cryptoMode: 'zero_knowledge_v2',
+      alg: 'RSA-OAEP-SHA1+A256CBC-HS256',
+      keyId: sha256Hex(Buffer.from(publicKeyXml)).slice(0, 24),
+      publicKeyXml
+    });
+    return;
+  }
+
   if (url.pathname === '/v1/agent/discord/status') {
     const link = discordLinks.get(String(payload.state || ''));
     writeJson(res, 200, {
@@ -2803,6 +3101,19 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/agent/precheck') {
+    const consentBlock = activeConsentBlockForIdentity({
+      discordId: payload.discordId,
+      machineFingerprint: payload.machineFingerprint
+    });
+    if (consentBlock) {
+      writeJson(res, 200, {
+        allowed: false,
+        accepted: false,
+        ...consentBlockPayload(consentBlock)
+      });
+      return;
+    }
+
     const ban = activeBanForIdentity({
       discordId: payload.discordId,
       machineFingerprint: payload.machineFingerprint,
@@ -2813,7 +3124,45 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/v1/agent/consent-status') {
+    const block = activeConsentBlockForIdentity({
+      discordId: payload.discordId,
+      machineFingerprint: payload.machineFingerprint
+    });
+    writeJson(res, 200, consentBlockPayload(block));
+    return;
+  }
+
+  if (url.pathname === '/v1/agent/consent-denied') {
+    const block = addConsentBlock({
+      discordId: payload.discordId,
+      discordTag: payload.discordTag,
+      machineFingerprint: payload.machineFingerprint,
+      publicIp,
+      localIps: payload.localIps,
+      reason: 'consent_denied_review_required'
+    });
+
+    writeJson(res, 200, {
+      ok: Boolean(block),
+      ...consentBlockPayload(block)
+    });
+    return;
+  }
+
   if (url.pathname === '/v1/agent/connect') {
+    const consentBlock = activeConsentBlockForIdentity({
+      discordId: payload.discordId,
+      machineFingerprint: payload.machineFingerprint
+    });
+    if (consentBlock) {
+      writeJson(res, 200, {
+        accepted: false,
+        ...consentBlockPayload(consentBlock)
+      });
+      return;
+    }
+
     const activeBan = activeBanForIdentity({
       discordId: payload.discordId,
       machineFingerprint: payload.machineFingerprint,
@@ -2877,6 +3226,46 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/agent/report') {
+    if (payload.encryptedReport && payload.decisionSummary) {
+      const action = actionFromDecisionSummary(payload.decisionSummary);
+      if (action === 'allow') {
+        writeJson(res, 200, {
+          accepted: true,
+          stored: false,
+          reportId: payload.decisionSummary.reportId || null,
+          action
+        });
+        return;
+      }
+
+      const report = addEncryptedReportFromPayload({
+        encryptedReport: payload.encryptedReport,
+        decisionSummary: payload.decisionSummary,
+        publicIp,
+        payload,
+        source: 'scan'
+      });
+      const ban = action === 'ban'
+        ? addBanReport({
+            report,
+            publicIp,
+            reason: payload.decisionSummary?.highestSeverity || 'suspicious scan'
+          })
+        : null;
+      const blockedSession = markSessionBlocked(payload, action === 'ban' ? 'suspicious_scan_ban' : 'suspicious_scan_blocked');
+
+      writeJson(res, 200, {
+        accepted: true,
+        stored: true,
+        zeroKnowledge: true,
+        reportId: report.id,
+        action,
+        banId: ban?.id || null,
+        sessionBlocked: Boolean(blockedSession)
+      });
+      return;
+    }
+
     let decrypted;
     try {
       decrypted = decryptEnvelope(payload.envelope);
@@ -2918,6 +3307,31 @@ export const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/v1/agent/alert') {
+    if (payload.encryptedReport && payload.decisionSummary) {
+      const report = addEncryptedReportFromPayload({
+        encryptedReport: payload.encryptedReport,
+        decisionSummary: payload.decisionSummary,
+        publicIp,
+        payload,
+        source: 'runtime_alert'
+      });
+      const ban = addBanReport({
+        report,
+        publicIp,
+        reason: payload.decisionSummary?.highestSeverity || 'runtime suspicious process'
+      });
+      markSessionBlocked(payload, 'runtime_suspicious_process');
+
+      writeJson(res, 200, {
+        accepted: true,
+        action: 'ban',
+        zeroKnowledge: true,
+        banId: ban.id,
+        reportId: report.id
+      });
+      return;
+    }
+
     let decrypted;
     try {
       decrypted = decryptEnvelope(payload.envelope);

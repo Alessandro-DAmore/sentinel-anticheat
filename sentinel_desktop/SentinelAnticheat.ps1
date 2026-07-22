@@ -20,6 +20,7 @@ $Script:LogoPath = Join-Path $Script:Root 'assets\sentinel-logo.png'
 $Script:IconPath = Join-Path $Script:Root 'assets\sentinel-app-icon.ico'
 $Script:LogsPath = Join-Path $Script:Root 'logs'
 $Script:ReportsPath = Join-Path $Script:Root 'reports'
+$Script:ConsentBlockPath = Join-Path $Script:Root 'consent-block.json'
 
 function Read-JsonFile {
   param([Parameter(Mandatory = $true)][string]$Path)
@@ -294,6 +295,144 @@ function New-EncryptedEnvelope {
     ciphertext = [Convert]::ToBase64String($cipherBytes)
     hmac = [Convert]::ToBase64String($tag)
   }
+}
+
+function New-RandomBytes {
+  param([int]$Length)
+
+  $bytes = New-Object byte[] $Length
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  return $bytes
+}
+
+function Get-ReportPublicKeyXml {
+  param($Config)
+
+  $inlineKey = [string](Get-ConfigValue -Config $Config -Name 'adminReportPublicKeyXml' -Default '')
+  if (-not [string]::IsNullOrWhiteSpace($inlineKey)) {
+    return $inlineKey
+  }
+
+  $endpointPath = [string](Get-ConfigValue -Config $Config -Name 'reportPublicKeyEndpoint' -Default '/v1/agent/crypto/public-key')
+  if ([string]::IsNullOrWhiteSpace($endpointPath)) {
+    throw 'Report public key endpoint not configured.'
+  }
+
+  $endpoint = if ($endpointPath.StartsWith('http', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $endpointPath
+  } else {
+    ($Config.cloudEndpoint.TrimEnd('/') + '/' + $endpointPath.TrimStart('/'))
+  }
+
+  $response = Invoke-SentinelJson -Uri $endpoint -AgentKey $Config.agentKey -Body @{
+    licenseKey = $Config.licenseKey
+    appVersion = $Config.version
+  }
+
+  $publicKeyXml = [string]$response.publicKeyXml
+  if ([string]::IsNullOrWhiteSpace($publicKeyXml)) {
+    throw 'Zero-knowledge report public key missing.'
+  }
+
+  return $publicKeyXml
+}
+
+function New-ZeroKnowledgeReportEnvelope {
+  param(
+    [Parameter(Mandatory = $true)]$Payload,
+    [Parameter(Mandatory = $true)]$Config
+  )
+
+  $payloadJson = $Payload | ConvertTo-Json -Depth 40 -Compress
+  $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($payloadJson)
+
+  $aesKey = New-RandomBytes -Length 32
+  $hmacKey = New-RandomBytes -Length 32
+  $keyMaterial = New-Object byte[] 64
+  [Array]::Copy($aesKey, 0, $keyMaterial, 0, 32)
+  [Array]::Copy($hmacKey, 0, $keyMaterial, 32, 32)
+
+  $iv = New-RandomBytes -Length 16
+  $aes = [System.Security.Cryptography.Aes]::Create()
+  try {
+    $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+    $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+    $aes.Key = $aesKey
+    $aes.IV = $iv
+    $encryptor = $aes.CreateEncryptor()
+    $cipherBytes = $encryptor.TransformFinalBlock($plainBytes, 0, $plainBytes.Length)
+  } finally {
+    $aes.Dispose()
+  }
+
+  $hmacInput = New-Object byte[] ($iv.Length + $cipherBytes.Length)
+  [Array]::Copy($iv, 0, $hmacInput, 0, $iv.Length)
+  [Array]::Copy($cipherBytes, 0, $hmacInput, $iv.Length, $cipherBytes.Length)
+  $hmac = [System.Security.Cryptography.HMACSHA256]::new($hmacKey)
+  try {
+    $tag = $hmac.ComputeHash($hmacInput)
+  } finally {
+    $hmac.Dispose()
+  }
+
+  $publicKeyXml = Get-ReportPublicKeyXml -Config $Config
+  $rsa = [System.Security.Cryptography.RSACryptoServiceProvider]::new(3072)
+  try {
+    $rsa.PersistKeyInCsp = $false
+    $rsa.FromXmlString($publicKeyXml)
+    $wrappedKey = $rsa.Encrypt($keyMaterial, $true)
+  } finally {
+    $rsa.Dispose()
+  }
+
+  return [ordered]@{
+    encrypted = $true
+    mode = 'zero_knowledge_v2'
+    alg = 'RSA-OAEP-SHA1+A256CBC-HS256'
+    keyId = (Get-Sha256Text $publicKeyXml).Substring(0, 24)
+    wrappedKey = [Convert]::ToBase64String($wrappedKey)
+    iv = [Convert]::ToBase64String($iv)
+    ciphertext = [Convert]::ToBase64String($cipherBytes)
+    hmac = [Convert]::ToBase64String($tag)
+    createdAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+}
+
+function New-ReportDecisionSummary {
+  param(
+    [Parameter(Mandatory = $true)]$Report,
+    [string]$Source = 'scan'
+  )
+
+  return [ordered]@{
+    reportId = $Report.reportId
+    generatedAt = $Report.generatedAt
+    source = $Source
+    suspicious = [bool]$Report.summary.suspicious
+    highestSeverity = [string]$Report.summary.highestSeverity
+    findingCount = [int]$Report.summary.findingCount
+  }
+}
+
+function Save-EncryptedReportLocal {
+  param(
+    [Parameter(Mandatory = $true)]$Report,
+    [Parameter(Mandatory = $true)]$Envelope,
+    [string]$Suffix = ''
+  )
+
+  $name = if ([string]::IsNullOrWhiteSpace($Suffix)) {
+    ('{0}.sentinel-report.json' -f $Report.reportId)
+  } else {
+    ('{0}.{1}.sentinel-report.json' -f $Report.reportId, $Suffix)
+  }
+  $path = Join-Path $Script:ReportsPath $name
+  [ordered]@{
+    id = $Report.reportId
+    decisionSummary = New-ReportDecisionSummary -Report $Report -Source $(if ($Suffix) { $Suffix } else { 'scan' })
+    encryptedReport = $Envelope
+  } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path -Encoding UTF8
+  return $path
 }
 
 function Add-Finding {
@@ -818,9 +957,9 @@ function Start-SentinelScan {
     findings = @($findings)
   }
 
-  $reportPath = Join-Path $Script:ReportsPath ('{0}.json' -f $report.reportId)
-  $report | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $reportPath -Encoding UTF8
-  & $Log ('[progress:90] Report locale scritto: {0}' -f $reportPath)
+  $envelope = New-ZeroKnowledgeReportEnvelope -Payload $report -Config $Config
+  $reportPath = Save-EncryptedReportLocal -Report $report -Envelope $envelope
+  & $Log ('[progress:90] Report locale cifrato scritto: {0}' -f $reportPath)
   Send-SentinelSessionHeartbeat -Config $Config -SessionId ([string]$session.sessionId) -DiscordId $DiscordId -Status 'active' -Log $Log
 
   if (($Config.reportOnlyWhenSuspicious -eq $true) -and ($findings.Count -eq 0)) {
@@ -828,15 +967,15 @@ function Start-SentinelScan {
     return @{ report = $report; upload = $null; session = $session }
   }
 
-  & $Log '[progress:94] Cifratura report e upload al cloud...'
-  $envelope = New-EncryptedEnvelope -Payload $report -SharedSecret $Config.sharedSecret
+  & $Log '[progress:94] Upload report cifrato zero-knowledge al cloud...'
   $upload = Invoke-SentinelJson -Uri (($Config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/report') -AgentKey $Config.agentKey -Body @{
     licenseKey = $Config.licenseKey
     sessionId = $session.sessionId
     discordId = $DiscordId
     discordTag = $DiscordTag
     machineFingerprint = $machineFingerprint
-    envelope = $envelope
+    decisionSummary = (New-ReportDecisionSummary -Report $report -Source 'scan')
+    encryptedReport = $envelope
   }
 
   & $Log '[progress:100] Upload completato.'
@@ -1855,16 +1994,16 @@ function Send-RuntimeAlert {
     findings = @($Finding)
   }
 
-  $reportPath = Join-Path $Script:ReportsPath ('{0}.runtime.json' -f $report.reportId)
-  $report | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $reportPath -Encoding UTF8
-  $envelope = New-EncryptedEnvelope -Payload $report -SharedSecret $config.sharedSecret
+  $envelope = New-ZeroKnowledgeReportEnvelope -Payload $report -Config $config
+  $reportPath = Save-EncryptedReportLocal -Report $report -Envelope $envelope -Suffix 'runtime'
 
   Invoke-SentinelJson -Uri (($config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/alert') -AgentKey $config.agentKey -Body @{
     licenseKey = $config.licenseKey
     sessionId = $Script:SessionId
     machineFingerprint = $machineFingerprint
     discordId = $Script:DiscordId
-    envelope = $envelope
+    decisionSummary = (New-ReportDecisionSummary -Report $report -Source 'runtime_alert')
+    encryptedReport = $envelope
   } | Out-Null
 }
 
@@ -2062,6 +2201,173 @@ $scanTimer.Add_Tick({
   $Script:ScanProcess = $null
 })
 
+function Get-ConsentReviewMessage {
+  return 'Hai rifiutato la policy Sentinel Anticheat. Per motivi di sicurezza non puoi connetterti finche uno staffer del Team Anticheat non completa il controllo in "Attesa Anticheat" e sblocca il tuo accesso.'
+}
+
+function Get-LocalConsentBlock {
+  if (-not (Test-Path -LiteralPath $Script:ConsentBlockPath)) {
+    return $null
+  }
+
+  try {
+    return Get-Content -LiteralPath $Script:ConsentBlockPath -Raw | ConvertFrom-Json
+  } catch {
+    return $null
+  }
+}
+
+function Set-LocalConsentBlock {
+  param($Payload)
+
+  $Payload | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Script:ConsentBlockPath -Encoding UTF8
+}
+
+function Clear-LocalConsentBlock {
+  if (Test-Path -LiteralPath $Script:ConsentBlockPath) {
+    Remove-Item -LiteralPath $Script:ConsentBlockPath -Force
+  }
+}
+
+function Test-ConsentBlockActive {
+  $local = Get-LocalConsentBlock
+  $machineFingerprint = Get-MachineFingerprint
+  if ($null -ne $local) {
+    try {
+      $response = Invoke-SentinelJson -Uri (($config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/consent-status') -AgentKey $config.agentKey -Body @{
+        licenseKey = $config.licenseKey
+        discordId = $Script:DiscordId
+        machineFingerprint = $machineFingerprint
+      }
+
+      if ($response.blocked -eq $true) {
+        return $true
+      }
+
+      Clear-LocalConsentBlock
+      return $false
+    } catch {
+      return $true
+    }
+  }
+
+  try {
+    $response = Invoke-SentinelJson -Uri (($config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/consent-status') -AgentKey $config.agentKey -Body @{
+      licenseKey = $config.licenseKey
+      discordId = $Script:DiscordId
+      machineFingerprint = $machineFingerprint
+    }
+    if ($response.blocked -eq $true) {
+      Set-LocalConsentBlock -Payload @{
+        blocked = $true
+        blockId = $response.blockId
+        reason = $response.reason
+        at = (Get-Date).ToUniversalTime().ToString('o')
+      }
+      return $true
+    }
+  } catch {}
+
+  return $false
+}
+
+function Register-ConsentDenied {
+  $machineFingerprint = Get-MachineFingerprint
+  $network = Get-LocalNetworkIdentity
+  $payload = @{
+    blocked = $true
+    reason = 'consent_denied_review_required'
+    at = (Get-Date).ToUniversalTime().ToString('o')
+  }
+
+  try {
+    $response = Invoke-SentinelJson -Uri (($config.cloudEndpoint.TrimEnd('/')) + '/v1/agent/consent-denied') -AgentKey $config.agentKey -Body @{
+      licenseKey = $config.licenseKey
+      discordId = $Script:DiscordId
+      discordTag = $Script:DiscordTag
+      machineFingerprint = $machineFingerprint
+      localIps = @($network.localIps)
+    }
+    $payload.blockId = $response.blockId
+  } catch {
+    $payload.offline = $true
+  }
+
+  Set-LocalConsentBlock -Payload $payload
+}
+
+function Show-SentinelPolicyConsent {
+  $dialog = New-Object System.Windows.Forms.Form
+  $dialog.Text = 'Sentinel Anticheat - Autorizzazione'
+  $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+  $dialog.Size = New-Object System.Drawing.Size(610, 360)
+  $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+  $dialog.MaximizeBox = $false
+  $dialog.MinimizeBox = $false
+  $dialog.BackColor = [System.Drawing.Color]::FromArgb(5, 13, 22)
+  $dialog.ForeColor = [System.Drawing.Color]::FromArgb(238, 245, 252)
+  $dialog.Font = New-UiFont -Names @('Segoe UI Variable Text', 'Segoe UI', 'Bahnschrift') -Size 9.5
+
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = 'Autorizzi la verifica Sentinel?'
+  $title.Font = New-UiFont -Names @('Segoe UI Variable Display', 'Bahnschrift', 'Segoe UI') -Size 17 -Style ([System.Drawing.FontStyle]::Bold)
+  $title.Location = New-Object System.Drawing.Point(24, 22)
+  $title.Size = New-Object System.Drawing.Size(540, 34)
+  $dialog.Controls.Add($title)
+
+  $body = New-Object System.Windows.Forms.Label
+  $body.Text = "Sentinel procedera con questi controlli:" + [Environment]::NewLine +
+    "- verifica processi, servizi e driver attivi;" + [Environment]::NewLine +
+    "- controllo moduli caricati da FiveM/GTA;" + [Environment]::NewLine +
+    "- scansione percorsi ad alto rischio: plugin, CitizenFX, Temp, Download;" + [Environment]::NewLine +
+    "- calcolo hash SHA-256 solo per indicatori sospetti;" + [Environment]::NewLine +
+    "- report cifrato zero-knowledge, senza upload dei file personali." + [Environment]::NewLine + [Environment]::NewLine +
+    "Se premi No, non potrai entrare finche lo staff non ti sblocca dopo controllo in Attesa Anticheat."
+  $body.Location = New-Object System.Drawing.Point(26, 72)
+  $body.Size = New-Object System.Drawing.Size(540, 172)
+  $body.ForeColor = [System.Drawing.Color]::FromArgb(194, 211, 226)
+  $dialog.Controls.Add($body)
+
+  $policy = New-Object System.Windows.Forms.Button
+  $policy.Text = 'Policy'
+  $policy.Location = New-Object System.Drawing.Point(26, 266)
+  $policy.Size = New-Object System.Drawing.Size(120, 36)
+  $policy.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+  $policy.BackColor = [System.Drawing.Color]::FromArgb(13, 30, 46)
+  $policy.ForeColor = [System.Drawing.Color]::FromArgb(238, 245, 252)
+  $policy.Add_Click({
+    $policyUrl = [string](Get-ConfigValue -Config $config -Name 'policyUrl' -Default (($config.cloudEndpoint.TrimEnd('/')) + '/policy'))
+    try { Start-Process $policyUrl | Out-Null } catch {}
+  })
+  $dialog.Controls.Add($policy)
+
+  $no = New-Object System.Windows.Forms.Button
+  $no.Text = 'No'
+  $no.Location = New-Object System.Drawing.Point(328, 266)
+  $no.Size = New-Object System.Drawing.Size(100, 36)
+  $no.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+  $no.BackColor = [System.Drawing.Color]::FromArgb(45, 61, 78)
+  $no.ForeColor = [System.Drawing.Color]::White
+  $no.DialogResult = [System.Windows.Forms.DialogResult]::No
+  $dialog.Controls.Add($no)
+
+  $yes = New-Object System.Windows.Forms.Button
+  $yes.Text = 'Si'
+  $yes.Location = New-Object System.Drawing.Point(450, 266)
+  $yes.Size = New-Object System.Drawing.Size(100, 36)
+  $yes.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+  $yes.BackColor = [System.Drawing.Color]::FromArgb(0, 127, 214)
+  $yes.ForeColor = [System.Drawing.Color]::White
+  $yes.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+  $dialog.Controls.Add($yes)
+
+  $dialog.AcceptButton = $yes
+  $dialog.CancelButton = $no
+  $result = $dialog.ShowDialog($form)
+  $dialog.Dispose()
+  return $result -eq [System.Windows.Forms.DialogResult]::Yes
+}
+
 function Invoke-ConnectAction {
   if (-not $consent.Checked) {
     [System.Windows.Forms.MessageBox]::Show('Devi autorizzare la verifica locale per procedere.', 'Sentinel Anticheat') | Out-Null
@@ -2070,6 +2376,21 @@ function Invoke-ConnectAction {
 
   if ([string]::IsNullOrWhiteSpace($Script:DiscordId)) {
     [System.Windows.Forms.MessageBox]::Show('Devi collegare Discord prima di connetterti.', 'Sentinel Anticheat') | Out-Null
+    return
+  }
+
+  if (Test-ConsentBlockActive) {
+    $message = Get-ConsentReviewMessage
+    Write-UiLog $message
+    [System.Windows.Forms.MessageBox]::Show($message, 'Sentinel Anticheat') | Out-Null
+    return
+  }
+
+  if (-not (Show-SentinelPolicyConsent)) {
+    Register-ConsentDenied
+    $message = Get-ConsentReviewMessage
+    Write-UiLog $message
+    [System.Windows.Forms.MessageBox]::Show($message, 'Sentinel Anticheat') | Out-Null
     return
   }
 

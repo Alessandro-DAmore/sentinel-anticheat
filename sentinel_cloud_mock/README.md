@@ -57,3 +57,13 @@ npm run dev
 
 This mock stores reports, sessions, and bans in memory only. Production should use a real database, official Discord OAuth2, per-customer keys, rate limits, audit logs, and asymmetric response signing.
 
+## Zero-knowledge report key
+
+Generate the local development report keys before testing encrypted reports:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\Sentinel_Anticheat\sentinel_cloud_mock\scripts\Generate-ZeroKnowledgeKeys.ps1"
+```
+
+The server exposes only `data/report-admin-public-key.xml` to the desktop agent. Keep `data/report-admin-private-key.xml` offline and outside git/cloud hosting.
+

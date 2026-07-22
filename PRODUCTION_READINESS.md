@@ -80,6 +80,7 @@ Sentinel is now an installable FiveM resource with:
 - Firewall smoke tests confirmed honeypot `blocked_event` and repeated-event `event_spam` detections in monitor mode.
 - Controlled one-shot enforce kick test confirmed real disconnect behavior without persisting a ban.
 - Desktop agent MVP created with consent UI, local scanner, encrypted report upload, local/public IP capture, and Admin Reports page.
+- Zero-knowledge report mode added for desktop reports: local files and uploads are encrypted before storage, with admin public-key wrapping.
 - Expected development warnings remain for placeholder privacy secret, disabled cloud, and missing real economy integrations.
 
 ## Not production-ready yet
@@ -89,6 +90,7 @@ Sentinel is now an installable FiveM resource with:
 - The cloud API is still a local mock.
 - Desktop agent packaging is still PowerShell/zip MVP, not a signed Windows installer.
 - Admin Reports are in-memory in the mock cloud; production needs database, auth, audit logs, and asymmetric encryption.
+- Production zero-knowledge requires keeping the report private key outside Render/cloud hosting and using a separate admin decrypt workflow.
 - Ban persistence is file-based, not database-backed.
 - ESX/QBCore integration still needs testing against the exact versions used by the target server.
 - Client-side checks are basic and should be treated as signals, not proof.
